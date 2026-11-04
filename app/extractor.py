@@ -4,6 +4,7 @@ import time
 import random
 import unicodedata
 import subprocess
+import asyncio
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -49,7 +50,7 @@ def sanitize_folder_name(name: str) -> str:
     clean = re.sub(r'[^a-zA-Z0-9_\- ]', '', normalized).strip().replace(' ', '_')
     return clean[:50] or "Vault"
 
-async def extract_single_tiktok_tikwm(url: str) -> List[ExtractedItem]:
+async def extract_single_tiktok_tikwm(client: httpx.AsyncClient, url: str) -> List[ExtractedItem]:
     """
     Extract single TikTok video HD without watermark or image album using TikWM API
     """
@@ -59,59 +60,59 @@ async def extract_single_tiktok_tikwm(url: str) -> List[ExtractedItem]:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
     }
 
-    async with httpx.AsyncClient(timeout=25.0) as client:
-        try:
-            resp = await client.post(api_url, data={"url": url, "hd": 1}, headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("code") == 0 and "data" in data:
-                    item_data = data["data"]
-                    caption = item_data.get("title", "")
+    try:
+        resp = await client.post(api_url, data={"url": url, "hd": 1}, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("code") == 0 and "data" in data:
+                item_data = data["data"]
+                caption = item_data.get("title", "")
 
-                    # Case 1: Photo Slideshow
-                    images = item_data.get("images", [])
-                    if images and isinstance(images, list) and len(images) > 0:
-                        for img_url in images:
-                            items.append(ExtractedItem(
-                                file_type="image",
-                                download_url=img_url,
-                                file_extension="jpg",
-                                caption=caption,
-                                thumbnail_url=img_url,
-                                original_url=url
-                            ))
-                        return items
-
-                    # Case 2: HD Video without Watermark
-                    video_url = item_data.get("hdplay") or item_data.get("play")
-                    if video_url:
-                        if video_url.startswith("/"):
-                            video_url = f"https://www.tikwm.com{video_url}"
-                        cover = item_data.get("cover") or item_data.get("origin_cover")
+                # Case 1: Photo Slideshow
+                images = item_data.get("images", [])
+                if images and isinstance(images, list) and len(images) > 0:
+                    for img_url in images:
                         items.append(ExtractedItem(
-                            file_type="video",
-                            download_url=video_url,
-                            file_extension="mp4",
+                            file_type="image",
+                            download_url=img_url,
+                            file_extension="jpg",
                             caption=caption,
-                            thumbnail_url=cover,
+                            thumbnail_url=img_url,
                             original_url=url
                         ))
-                        return items
-        except Exception as e:
-            logger.warning(f"TikWM single video extraction failed for {url}: {e}")
+                    return items
+
+                # Case 2: HD Video without Watermark
+                video_url = item_data.get("hdplay") or item_data.get("play")
+                if video_url:
+                    if video_url.startswith("/"):
+                        video_url = f"https://www.tikwm.com{video_url}"
+                    cover = item_data.get("cover") or item_data.get("origin_cover")
+                    items.append(ExtractedItem(
+                        file_type="video",
+                        download_url=video_url,
+                        file_extension="mp4",
+                        caption=caption,
+                        thumbnail_url=cover,
+                        original_url=url
+                    ))
+                    return items
+    except Exception as e:
+        logger.warning(f"TikWM extraction failed for {url}: {e}")
     return items
 
-def get_tiktok_profile_posts_sync(profile_url: str, max_count: int = 30) -> List[str]:
+def get_tiktok_profile_posts_sync(profile_url: str, max_count: int = 15) -> List[str]:
     """
-    Use gallery-dl to solve TikTok JS challenge and extract user post URLs
+    Use gallery-dl via python -m to solve TikTok JS challenge and extract user post URLs
     """
+    import sys
     clean = profile_url.rstrip("/")
     if not clean.endswith("/posts"):
         clean += "/posts"
 
-    cmd = ["gallery-dl", "-s", "--range", f"1-{max_count}", clean]
+    cmd = [sys.executable, "-m", "gallery_dl", "-s", "--range", f"1-{max_count}", clean]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=50)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         output = proc.stdout + "\n" + proc.stderr
         urls = list(dict.fromkeys(re.findall(r'https?://(?:www\.)?tiktok\.com/@[^/]+/video/\d+', output)))
         return urls[:max_count]
@@ -119,37 +120,37 @@ def get_tiktok_profile_posts_sync(profile_url: str, max_count: int = 30) -> List
         logger.error(f"gallery-dl profile extraction error: {e}")
         return []
 
-async def extract_tiktok_media(url: str, cookies_path: Optional[Path] = None, max_items: int = 30) -> List[ExtractedItem]:
+async def extract_tiktok_media(url: str, cookies_path: Optional[Path] = None, max_items: int = 12) -> List[ExtractedItem]:
     """
     Handles both TikTok profile/account links and single post/video links
     """
     items: List[ExtractedItem] = []
-
-    # Check if this is a single video URL
     is_single_video = ("/video/" in url) or ("vt.tiktok.com" in url) or ("vm.tiktok.com" in url)
 
-    if is_single_video:
-        # Try TikWM first for HD no-watermark
-        items = await extract_single_tiktok_tikwm(url)
-        if items:
-            return items
-    else:
-        # This is a user profile link (e.g. https://www.tiktok.com/@username)
-        import asyncio
-        loop = asyncio.get_event_loop()
-        post_urls = await loop.run_in_executor(None, get_tiktok_profile_posts_sync, url, max_items)
-
-        if post_urls:
-            logger.info(f"Found {len(post_urls)} posts from TikTok profile. Extracting media...")
-            for post_url in post_urls:
-                post_items = await extract_single_tiktok_tikwm(post_url)
-                if post_items:
-                    items.extend(post_items)
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        if is_single_video:
+            # Single video/slide
+            items = await extract_single_tiktok_tikwm(client, url)
             if items:
                 return items
+        else:
+            # Profile link: Extract latest posts (default limit to 10-12 for super-fast response)
+            target_limit = min(max_items, 12)
+            loop = asyncio.get_event_loop()
+            post_urls = await loop.run_in_executor(None, get_tiktok_profile_posts_sync, url, target_limit)
 
-    # Fallback: yt-dlp with optional cookies
-    import asyncio
+            if post_urls:
+                logger.info(f"Processing {len(post_urls)} posts with safe pacing...")
+                for p_url in post_urls:
+                    post_items = await extract_single_tiktok_tikwm(client, p_url)
+                    if post_items:
+                        items.extend(post_items)
+                    await asyncio.sleep(0.5)
+
+                if items:
+                    return items
+
+    # Fallback to yt-dlp
     loop = asyncio.get_event_loop()
     fallback_items = await loop.run_in_executor(
         None,
@@ -163,7 +164,7 @@ async def extract_tiktok_media(url: str, cookies_path: Optional[Path] = None, ma
 
     return items
 
-def extract_with_ytdlp(url: str, cookies_file: Optional[Path] = None, max_items: int = 50) -> List[ExtractedItem]:
+def extract_with_ytdlp(url: str, cookies_file: Optional[Path] = None, max_items: int = 25) -> List[ExtractedItem]:
     """
     Universal extraction using yt-dlp with cookies.txt support
     """
@@ -250,7 +251,6 @@ async def extract_media_items(
 
     # 2. Other platforms (Instagram, Threads, Facebook) or fallback
     if not items:
-        import asyncio
         loop = asyncio.get_event_loop()
         items = await loop.run_in_executor(
             None,
@@ -287,8 +287,8 @@ async def download_file(
     }
 
     try:
-        delay = random.uniform(settings.RATE_LIMIT_DELAY_MIN, settings.RATE_LIMIT_DELAY_MAX)
-        await time_sleep_async(delay)
+        # Shorter, smoother delay (0.3s - 0.8s) for faster completion
+        await asyncio.sleep(random.uniform(0.3, 0.8))
 
         async with client.stream("GET", item.download_url, headers=headers, follow_redirects=True, timeout=60.0) as resp:
             if resp.status_code == 200:
@@ -317,7 +317,3 @@ async def download_file(
             except Exception:
                 pass
     return None
-
-async def time_sleep_async(seconds: float):
-    import asyncio
-    await asyncio.sleep(seconds)
