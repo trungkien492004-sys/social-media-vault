@@ -79,7 +79,8 @@ class TaskManager:
         url: str,
         custom_name: str,
         notes: Optional[str],
-        media_type: str
+        media_type: str,
+        max_items: int = 50
     ):
         db: Session = SessionLocal()
         try:
@@ -117,7 +118,8 @@ class TaskManager:
                 url=url,
                 platform=platform,
                 media_filter=media_type,
-                cookies_path=cookies_file
+                cookies_path=cookies_file,
+                max_items=max_items
             )
 
             total_items = len(extracted_items)

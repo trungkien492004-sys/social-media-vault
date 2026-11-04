@@ -3,10 +3,11 @@ from typing import List, Optional
 from pydantic import BaseModel, Field, HttpUrl
 
 class ExtractRequest(BaseModel):
-    url: str = Field(..., description="Profile or Post URL from Facebook, Instagram, Threads, TikTok")
+    url: str = Field(..., description="Profile or Post URL from Facebook, Instagram, Threads, TikTok, Zalo")
     custom_name: str = Field(..., min_length=1, max_length=100, description="Custom owner name or title")
     notes: Optional[str] = Field(None, max_length=500, description="Optional notes or tags")
     media_type: str = Field("all", pattern="^(all|image|video)$", description="Media format filter")
+    max_items: Optional[int] = Field(30, ge=1, le=150, description="Maximum number of media items to download")
 
 class MediaItemOut(BaseModel):
     id: int

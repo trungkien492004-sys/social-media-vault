@@ -66,6 +66,11 @@ const PLATFORM_CONFIG = {
         color: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
         icon: 'facebook'
     },
+    zalo: {
+        name: 'Zalo',
+        color: 'bg-sky-500/10 text-sky-400 border-sky-500/30',
+        icon: 'message-square'
+    },
     other: {
         name: 'Media',
         color: 'bg-slate-700 text-slate-300 border-slate-600',
@@ -79,6 +84,7 @@ function detectPlatformFromUrl(url) {
     if (lower.includes("instagram.com")) return "instagram";
     if (lower.includes("threads.net")) return "threads";
     if (lower.includes("facebook.com") || lower.includes("fb.watch") || lower.includes("fb.com")) return "facebook";
+    if (lower.includes("zalo.me") || lower.includes("zadn.vn")) return "zalo";
     return "other";
 }
 
@@ -314,6 +320,7 @@ async function handleExtractSubmit(e) {
     const customName = document.getElementById("customNameInput").value.trim();
     const notes = document.getElementById("notesInput").value.trim();
     const mediaType = document.querySelector('input[name="mediaType"]:checked').value;
+    const maxItems = parseInt(document.getElementById("maxItemsSelect")?.value || "50", 10);
 
     const btnSubmit = document.getElementById("btnSubmit");
     btnSubmit.disabled = true;
@@ -326,7 +333,8 @@ async function handleExtractSubmit(e) {
                 url: url,
                 custom_name: customName,
                 notes: notes,
-                media_type: mediaType
+                media_type: mediaType,
+                max_items: maxItems
             })
         });
 

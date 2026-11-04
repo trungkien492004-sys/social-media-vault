@@ -53,7 +53,8 @@ async def start_task(req: ExtractRequest, background_tasks: BackgroundTasks, db:
             url=url,
             custom_name=req.custom_name,
             notes=req.notes,
-            media_type=req.media_type
+            media_type=req.media_type,
+            max_items=req.max_items or 50
         )
     )
 

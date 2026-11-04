@@ -42,6 +42,8 @@ def detect_platform(url: str) -> str:
         return "threads"
     elif "facebook.com" in url_lower or "fb.watch" in url_lower or "fb.com" in url_lower:
         return "facebook"
+    elif "zalo.me" in url_lower or "zadn.vn" in url_lower:
+        return "zalo"
     return "other"
 
 def sanitize_folder_name(name: str) -> str:
@@ -120,7 +122,103 @@ def get_tiktok_profile_posts_sync(profile_url: str, max_count: int = 15) -> List
         logger.error(f"gallery-dl profile extraction error: {e}")
         return []
 
-async def extract_tiktok_media(url: str, cookies_path: Optional[Path] = None, max_items: int = 12) -> List[ExtractedItem]:
+async def extract_zalo_media(url: str) -> List[ExtractedItem]:
+    """
+    Extract video/images from Zalo Video (zalo.me/video), Zalo OA or direct ZADN CDN media
+    """
+    items: List[ExtractedItem] = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7"
+    }
+
+    # Case 1: Direct media URL (e.g. *.zadn.vn or *.mp4 / *.jpg)
+    url_clean = url.split("?")[0].lower()
+    if any(url_clean.endswith(ext) for ext in [".mp4", ".mov", ".m4v"]):
+        items.append(ExtractedItem(
+            file_type="video",
+            download_url=url,
+            file_extension="mp4",
+            caption="Video từ Zalo",
+            original_url=url
+        ))
+        return items
+    elif any(url_clean.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp"]):
+        items.append(ExtractedItem(
+            file_type="image",
+            download_url=url,
+            file_extension="jpg",
+            caption="Ảnh từ Zalo",
+            original_url=url
+        ))
+        return items
+
+    # Case 2: Scrape Zalo Web Page / Zalo Video
+    try:
+        async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                html = resp.text
+
+                # Extract OpenGraph title / caption
+                title_match = re.search(r'<meta[^>]*property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']', html)
+                caption = title_match.group(1) if title_match else "Nội dung Zalo"
+
+                # Check og:video
+                video_match = re.search(r'<meta[^>]*property=["\']og:video(?::url)?["\'][^>]*content=["\']([^"\']+)["\']', html)
+                if not video_match:
+                    video_match = re.search(r'<video[^>]*src=["\']([^"\']+)["\']', html)
+                if not video_match:
+                    video_match = re.search(r'<source[^>]*src=["\']([^"\']+\.mp4[^"\']*)["\']', html)
+
+                if video_match:
+                    v_url = video_match.group(1).replace("&amp;", "&")
+                    if v_url.startswith("//"):
+                        v_url = "https:" + v_url
+                    items.append(ExtractedItem(
+                        file_type="video",
+                        download_url=v_url,
+                        file_extension="mp4",
+                        caption=caption,
+                        original_url=url
+                    ))
+                    return items
+
+                # Check og:image or all images
+                img_match = re.search(r'<meta[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']', html)
+                if img_match:
+                    img_url = img_match.group(1).replace("&amp;", "&")
+                    if img_url.startswith("//"):
+                        img_url = "https:" + img_url
+                    items.append(ExtractedItem(
+                        file_type="image",
+                        download_url=img_url,
+                        file_extension="jpg",
+                        caption=caption,
+                        original_url=url
+                    ))
+                    return items
+
+                # Extract zadn.vn media URLs
+                zadn_urls = list(dict.fromkeys(re.findall(r'https?://[^\s"\'<>]+\.zadn\.vn/[^\s"\'<>]+', html)))
+                for z_url in zadn_urls[:10]:
+                    z_clean = z_url.split("?")[0].lower()
+                    f_type = "video" if any(z_clean.endswith(e) for e in [".mp4", ".mov"]) else "image"
+                    items.append(ExtractedItem(
+                        file_type=f_type,
+                        download_url=z_url,
+                        file_extension="mp4" if f_type == "video" else "jpg",
+                        caption=caption,
+                        original_url=url
+                    ))
+
+    except Exception as e:
+        logger.error(f"Zalo extraction error: {e}")
+
+    return items
+
+async def extract_tiktok_media(url: str, cookies_path: Optional[Path] = None, max_items: int = 50) -> List[ExtractedItem]:
     """
     Handles both TikTok profile/account links and single post/video links
     """
@@ -134,18 +232,18 @@ async def extract_tiktok_media(url: str, cookies_path: Optional[Path] = None, ma
             if items:
                 return items
         else:
-            # Profile link: Extract latest posts (default limit to 10-12 for super-fast response)
-            target_limit = min(max_items, 12)
+            # Profile link: Extract posts up to requested max_items
+            target_limit = min(max_items, 100)
             loop = asyncio.get_event_loop()
             post_urls = await loop.run_in_executor(None, get_tiktok_profile_posts_sync, url, target_limit)
 
             if post_urls:
-                logger.info(f"Processing {len(post_urls)} posts with safe pacing...")
+                logger.info(f"Processing {len(post_urls)} posts from TikTok profile...")
                 for p_url in post_urls:
                     post_items = await extract_single_tiktok_tikwm(client, p_url)
                     if post_items:
                         items.extend(post_items)
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.4)
 
                 if items:
                     return items
@@ -238,7 +336,8 @@ async def extract_media_items(
     url: str,
     platform: str,
     media_filter: str = "all",
-    cookies_path: Optional[Path] = None
+    cookies_path: Optional[Path] = None,
+    max_items: int = 50
 ) -> List[ExtractedItem]:
     """
     Main extraction dispatcher
@@ -247,9 +346,13 @@ async def extract_media_items(
 
     # 1. Specialized TikTok Extraction (Profile or Video)
     if platform == "tiktok":
-        items = await extract_tiktok_media(url, cookies_path, settings.MAX_ITEMS_PER_TASK)
+        items = await extract_tiktok_media(url, cookies_path, max_items)
 
-    # 2. Other platforms (Instagram, Threads, Facebook) or fallback
+    # 2. Specialized Zalo Extraction (Zalo Video, OA, Direct Media)
+    elif platform == "zalo":
+        items = await extract_zalo_media(url)
+
+    # 3. Other platforms (Instagram, Threads, Facebook) or fallback
     if not items:
         loop = asyncio.get_event_loop()
         items = await loop.run_in_executor(
@@ -257,7 +360,7 @@ async def extract_media_items(
             extract_with_ytdlp,
             url,
             cookies_path,
-            settings.MAX_ITEMS_PER_TASK
+            max_items
         )
 
     # 3. Filter by user preference: "all", "image", "video"

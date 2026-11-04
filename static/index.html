@@ -101,7 +101,7 @@
                         Trích Xuất & Lưu Trữ Media Mạng Xã Hội
                     </h2>
                     <p class="text-slate-400 text-sm sm:text-base">
-                        Hỗ trợ TikTok (HD không watermark), Facebook Reels/Album, Instagram & Threads.
+                        Hỗ trợ TikTok (HD không watermark), Facebook Reels/Album, Instagram, Threads & Zalo.
                     </p>
                 </div>
 
@@ -120,7 +120,7 @@
                                 type="url" 
                                 id="urlInput"
                                 required 
-                                placeholder="Dán link Facebook, Instagram, Threads hoặc TikTok..."
+                                placeholder="Dán link Facebook, Instagram, Threads, TikTok hoặc Zalo..."
                                 class="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 text-white rounded-xl pl-11 pr-28 py-3.5 text-sm outline-none transition placeholder-slate-500"
                             />
                             <span id="detectedPlatformBadge" class="absolute right-3 hidden text-[11px] font-semibold px-2.5 py-1 rounded-md uppercase tracking-wider"></span>
@@ -154,34 +154,45 @@
                         </div>
                     </div>
 
-                    <!-- Media Format Filter Chips & Submit Button -->
-                    <div class="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-                        <div class="flex items-center space-x-2">
-                            <span class="text-xs font-semibold text-slate-400 mr-1">Định dạng:</span>
-                            <label class="cursor-pointer">
-                                <input type="radio" name="mediaType" value="all" checked class="peer sr-only">
-                                <span class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 peer-checked:bg-indigo-600 peer-checked:text-white transition inline-block">
-                                    Tất cả ảnh & video
-                                </span>
-                            </label>
-                            <label class="cursor-pointer">
-                                <input type="radio" name="mediaType" value="image" class="peer sr-only">
-                                <span class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 peer-checked:bg-indigo-600 peer-checked:text-white transition inline-block">
-                                    Chỉ ảnh
-                                </span>
-                            </label>
-                            <label class="cursor-pointer">
-                                <input type="radio" name="mediaType" value="video" class="peer sr-only">
-                                <span class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 peer-checked:bg-indigo-600 peer-checked:text-white transition inline-block">
-                                    Chỉ video
-                                </span>
-                            </label>
+                    <!-- Media Format Filter Chips, Max Count Selector & Submit Button -->
+                    <div class="pt-2 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+                        <div class="flex flex-wrap items-center gap-3">
+                            <div class="flex items-center space-x-1.5">
+                                <span class="text-xs font-semibold text-slate-400 mr-1">Định dạng:</span>
+                                <label class="cursor-pointer">
+                                    <input type="radio" name="mediaType" value="all" checked class="peer sr-only">
+                                    <span class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 peer-checked:bg-indigo-600 peer-checked:text-white transition inline-block">
+                                        Tất cả
+                                    </span>
+                                </label>
+                                <label class="cursor-pointer">
+                                    <input type="radio" name="mediaType" value="image" class="peer sr-only">
+                                    <span class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 peer-checked:bg-indigo-600 peer-checked:text-white transition inline-block">
+                                        Ảnh
+                                    </span>
+                                </label>
+                                <label class="cursor-pointer">
+                                    <input type="radio" name="mediaType" value="video" class="peer sr-only">
+                                    <span class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 peer-checked:bg-indigo-600 peer-checked:text-white transition inline-block">
+                                        Video
+                                    </span>
+                                </label>
+                            </div>
+
+                            <div class="flex items-center space-x-1.5 pl-2 border-l border-slate-800">
+                                <span class="text-xs font-semibold text-slate-400">Số lượng:</span>
+                                <select id="maxItemsSelect" class="bg-slate-900 border border-slate-700 text-xs font-medium text-white rounded-lg px-2.5 py-1.5 outline-none focus:border-indigo-500">
+                                    <option value="25">25 mới nhất</option>
+                                    <option value="50" selected>50 bài</option>
+                                    <option value="100">100 bài (Tất cả)</option>
+                                </select>
+                            </div>
                         </div>
 
                         <button 
                             type="submit" 
                             id="btnSubmit" 
-                            class="inline-flex items-center justify-center space-x-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold px-6 py-3 rounded-xl shadow-lg shadow-indigo-600/30 transition transform active:scale-95 disabled:opacity-50 text-sm"
+                            class="inline-flex items-center justify-center space-x-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold px-6 py-3 rounded-xl shadow-lg shadow-indigo-600/30 transition transform active:scale-95 disabled:opacity-50 text-sm whitespace-nowrap"
                         >
                             <i data-lucide="download-cloud" class="w-4 h-4"></i>
                             <span>Bắt đầu cào & Lưu vào kho</span>
@@ -242,6 +253,9 @@
                     </button>
                     <button data-filter="facebook" class="platform-filter px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-400 hover:text-white transition">
                         Facebook
+                    </button>
+                    <button data-filter="zalo" class="platform-filter px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-400 hover:text-white transition">
+                        Zalo
                     </button>
                 </div>
 
