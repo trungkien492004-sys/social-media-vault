@@ -106,7 +106,7 @@ class TaskManager:
             await self.broadcast_event(task_id, {
                 "status": "analyzing",
                 "progress": 5,
-                "message": f"Đang phân tích liên kết {platform.upper()}...",
+                "message": f"Đang quét dữ liệu từ {platform.upper()} (hỗ trợ cả video lẻ và toàn bộ kênh)...",
                 "platform": platform,
                 "vault_id": vault_id
             })
