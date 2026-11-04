@@ -32,6 +32,23 @@ class ExtractedItem:
         self.thumbnail_url = thumbnail_url
         self.original_url = original_url or ""
 
+def normalize_url(url: str) -> str:
+    url = url.strip()
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+
+    # Normalize Facebook URLs
+    if "facebook.com" in url or "fb.com" in url or "fb.watch" in url:
+        # If user copied friends suggestions link or profile_id param
+        m = re.search(r'[?&]profile_id=(\d+)', url)
+        if m:
+            return f"https://www.facebook.com/profile.php?id={m.group(1)}"
+        m_num = re.search(r'facebook\.com/(\d{10,25})(?:[/?]|$)', url)
+        if m_num:
+            return f"https://www.facebook.com/profile.php?id={m_num.group(1)}"
+
+    return url
+
 def detect_platform(url: str) -> str:
     url_lower = url.lower()
     if "tiktok.com" in url_lower:

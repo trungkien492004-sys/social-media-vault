@@ -7,16 +7,14 @@ from app.database import get_db
 from app.models import Vault
 from app.schemas import ExtractRequest, TaskResponse
 from app.task_manager import task_manager
-from app.extractor import detect_platform, sanitize_folder_name
+from app.extractor import detect_platform, sanitize_folder_name, normalize_url
 from app.config import settings
 
 router = APIRouter(prefix="/api/tasks", tags=["Tasks"])
 
 @router.post("/start", response_model=TaskResponse)
 async def start_task(req: ExtractRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    url = req.url.strip()
-    if not url.startswith("http://") and not url.startswith("https://"):
-        url = "https://" + url
+    url = normalize_url(req.url)
 
     platform = detect_platform(url)
     clean_name = sanitize_folder_name(req.custom_name)

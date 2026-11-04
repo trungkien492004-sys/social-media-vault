@@ -124,7 +124,13 @@ class TaskManager:
 
             total_items = len(extracted_items)
             if total_items == 0:
-                err_msg = "Không tìm thấy nội dung media nào từ liên kết hoặc tài khoản này (có thể là trang riêng tư, bị hạn chế độ tuổi, hoặc cần tải cookies.txt trong phần Cài đặt)."
+                if platform == "facebook":
+                    err_msg = "Facebook chặn xem trang này khi chưa đăng nhập (Facebook tự động chuyển sang trang Login). Hãy bấm nút 'Cài đặt Cookie' (góc trên bên phải) để nạp file cookies.txt của bạn một lần, sau đó hệ thống sẽ tải được ảnh/video từ trang này ngay!"
+                elif platform == "instagram":
+                    err_msg = "Instagram yêu cầu đăng nhập để xem trang cá nhân hoặc bài viết này. Hãy nạp file cookies.txt trong phần 'Cài đặt Cookie' (góc trên) để tiếp tục."
+                else:
+                    err_msg = "Không tìm thấy nội dung media nào từ liên kết này (có thể là bài viết riêng tư, hoặc liên kết không chứa file video/ảnh)."
+
                 vault.status = "error"
                 vault.error_message = err_msg
                 db.commit()
