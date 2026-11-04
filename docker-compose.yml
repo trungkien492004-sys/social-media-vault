@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  social-vault:
+    build: .
+    container_name: social_media_vault
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - DEBUG=False
+    volumes:
+      - ./data:/app/data
+      - ./vault:/app/vault
+      - ./cookies:/app/cookies

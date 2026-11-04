@@ -1,0 +1,47 @@
+from datetime import datetime
+from sqlalchemy import Column, Integer, BigInteger, String, Text, DateTime, ForeignKey
+from sqlalchemy.orm import relationship
+from app.database import Base
+
+class Vault(Base):
+    __tablename__ = "vaults"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    custom_name = Column(String(255), nullable=False, index=True)
+    platform = Column(String(50), nullable=False, index=True)
+    profile_url = Column(Text, nullable=False)
+    notes = Column(Text, nullable=True)
+    media_type_filter = Column(String(20), default="all")  # all, image, video
+    folder_name = Column(String(255), nullable=False)
+    folder_path = Column(String(500), nullable=False)
+    status = Column(String(50), default="pending", index=True)  # pending, downloading, completed, error
+    error_message = Column(Text, nullable=True)
+    
+    total_items = Column(Integer, default=0)
+    total_images = Column(Integer, default=0)
+    total_videos = Column(Integer, default=0)
+    total_size_bytes = Column(BigInteger, default=0)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    media_items = relationship("MediaItem", back_populates="vault", cascade="all, delete-orphan", order_by="desc(MediaItem.id)")
+
+
+class MediaItem(Base):
+    __tablename__ = "media_items"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    vault_id = Column(Integer, ForeignKey("vaults.id", ondelete="CASCADE"), nullable=False, index=True)
+    file_type = Column(String(20), nullable=False)  # image, video
+    file_name = Column(String(255), nullable=False)
+    file_path = Column(String(500), nullable=False)  # Relative to vault root, e.g. "vault_folder/001.mp4"
+    file_size = Column(BigInteger, default=0)
+    original_url = Column(Text, nullable=True)
+    caption = Column(Text, nullable=True)
+    thumbnail_url = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    vault = relationship("Vault", back_populates="media_items")

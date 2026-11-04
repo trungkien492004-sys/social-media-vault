@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: social-media-vault
+    env: docker
+    plan: free
+    region: singapore
+    dockerfilePath: Dockerfile
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: DEBUG
+        value: "False"

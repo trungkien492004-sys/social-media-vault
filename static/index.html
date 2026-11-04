@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Media Media Vault - Lưu Trữ & Trích Xuất Media Đa Nền Tảng</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eef2ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased selection:bg-indigo-500 selection:text-white">
+
+    <!-- Navbar -->
+    <header class="border-b border-slate-800/80 sticky top-0 z-40 bg-slate-950/80 backdrop-blur-md">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-violet-500 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                    <i data-lucide="archive" class="w-5 h-5 text-white"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-lg leading-tight bg-gradient-to-r from-white via-slate-200 to-indigo-300 bg-clip-text text-transparent">
+                        Social Media Vault
+                    </h1>
+                    <p class="text-xs text-slate-400 font-medium">Lưu trữ ảnh & video gốc không watermark</p>
+                </div>
+            </div>
+
+            <!-- Stats & Quick Actions -->
+            <div class="flex items-center space-x-3">
+                <div id="statsBar" class="hidden sm:flex items-center space-x-2 text-xs bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-slate-300">
+                    <span><strong id="statVaults" class="text-indigo-400">0</strong> Kho</span>
+                    <span class="text-slate-600">•</span>
+                    <span><strong id="statMedia" class="text-violet-400">0</strong> File</span>
+                    <span class="text-slate-600">•</span>
+                    <span id="statStorage" class="text-emerald-400 font-medium">0 MB</span>
+                </div>
+
+                <button id="btnOpenSettings" class="flex items-center space-x-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 transition border border-slate-700/60">
+                    <i data-lucide="key" class="w-3.5 h-3.5 text-amber-400"></i>
+                    <span id="cookieStatusBadge">Cài đặt Cookie</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full space-y-8">
+
+        <!-- Input Extraction Section -->
+        <section class="glass-panel rounded-2xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
+            <div class="absolute -top-24 -right-24 w-72 h-72 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
+            <div class="absolute -bottom-24 -left-24 w-72 h-72 bg-violet-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+            <div class="max-w-3xl mx-auto">
+                <div class="text-center space-y-2 mb-6">
+                    <h2 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+                        Trích Xuất & Lưu Trữ Media Mạng Xã Hội
+                    </h2>
+                    <p class="text-slate-400 text-sm sm:text-base">
+                        Hỗ trợ TikTok (HD không watermark), Facebook Reels/Album, Instagram & Threads.
+                    </p>
+                </div>
+
+                <!-- Input Form -->
+                <form id="extractForm" class="space-y-4">
+                    <!-- URL Input with auto platform detector -->
+                    <div class="relative">
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                            Liên kết bài viết / Trang cá nhân
+                        </label>
+                        <div class="relative flex items-center">
+                            <span id="platformIconContainer" class="absolute left-3.5 text-slate-500">
+                                <i data-lucide="link" class="w-5 h-5"></i>
+                            </span>
+                            <input 
+                                type="url" 
+                                id="urlInput"
+                                required 
+                                placeholder="Dán link Facebook, Instagram, Threads hoặc TikTok..."
+                                class="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 text-white rounded-xl pl-11 pr-28 py-3.5 text-sm outline-none transition placeholder-slate-500"
+                            />
+                            <span id="detectedPlatformBadge" class="absolute right-3 hidden text-[11px] font-semibold px-2.5 py-1 rounded-md uppercase tracking-wider"></span>
+                        </div>
+                    </div>
+
+                    <!-- Custom Name & Notes -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                                Tên tùy chỉnh / Định danh <span class="text-rose-500">*</span>
+                            </label>
+                            <input 
+                                type="text" 
+                                id="customNameInput" 
+                                required 
+                                placeholder="VD: Thầy Kiên, Khách hàng A, Mẫu ảnh X..."
+                                class="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 text-white rounded-xl px-4 py-2.5 text-sm outline-none transition placeholder-slate-500"
+                            />
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                                Ghi chú / Tags
+                            </label>
+                            <input 
+                                type="text" 
+                                id="notesInput" 
+                                placeholder="VD: Tài liệu Toán HK1, Video giảng dạy..."
+                                class="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 text-white rounded-xl px-4 py-2.5 text-sm outline-none transition placeholder-slate-500"
+                            />
+                        </div>
+                    </div>
+
+                    <!-- Media Format Filter Chips & Submit Button -->
+                    <div class="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xs font-semibold text-slate-400 mr-1">Định dạng:</span>
+                            <label class="cursor-pointer">
+                                <input type="radio" name="mediaType" value="all" checked class="peer sr-only">
+                                <span class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 peer-checked:bg-indigo-600 peer-checked:text-white transition inline-block">
+                                    Tất cả ảnh & video
+                                </span>
+                            </label>
+                            <label class="cursor-pointer">
+                                <input type="radio" name="mediaType" value="image" class="peer sr-only">
+                                <span class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 peer-checked:bg-indigo-600 peer-checked:text-white transition inline-block">
+                                    Chỉ ảnh
+                                </span>
+                            </label>
+                            <label class="cursor-pointer">
+                                <input type="radio" name="mediaType" value="video" class="peer sr-only">
+                                <span class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 peer-checked:bg-indigo-600 peer-checked:text-white transition inline-block">
+                                    Chỉ video
+                                </span>
+                            </label>
+                        </div>
+
+                        <button 
+                            type="submit" 
+                            id="btnSubmit" 
+                            class="inline-flex items-center justify-center space-x-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold px-6 py-3 rounded-xl shadow-lg shadow-indigo-600/30 transition transform active:scale-95 disabled:opacity-50 text-sm"
+                        >
+                            <i data-lucide="download-cloud" class="w-4 h-4"></i>
+                            <span>Bắt đầu cào & Lưu vào kho</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <!-- Realtime Progress Card (Hidden initially) -->
+        <section id="progressSection" class="hidden glass-panel border border-indigo-500/30 rounded-2xl p-6 shadow-xl space-y-4 animate-fade-in">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-center space-x-3">
+                    <div id="progressSpinner" class="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center animate-spin">
+                        <i data-lucide="loader-2" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h4 id="progressTitle" class="font-bold text-sm text-white">Đang xử lý tác vụ...</h4>
+                        <p id="progressMessage" class="text-xs text-slate-400">Khởi tạo kết nối thời gian thực...</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <span id="progressCountBadge" class="text-xs bg-slate-800 text-indigo-300 px-3 py-1 rounded-full font-medium border border-slate-700">0/0</span>
+                    <span id="progressPercentBadge" class="text-xs font-bold text-white bg-indigo-600 px-2.5 py-1 rounded-full">0%</span>
+                </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                <div id="progressBar" class="bg-gradient-to-r from-indigo-500 to-emerald-400 h-2.5 rounded-full transition-all duration-300 w-0"></div>
+            </div>
+
+            <!-- Live Streamed Thumbnails Preview Box -->
+            <div id="liveFeedContainer" class="hidden pt-2 border-t border-slate-800">
+                <p class="text-xs font-semibold text-slate-400 mb-2">Media vừa được lưu:</p>
+                <div id="liveFeedList" class="flex items-center space-x-2 overflow-x-auto pb-2">
+                    <!-- Dynamic mini cards -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Vault Library / Gallery Section -->
+        <section class="space-y-6">
+            <!-- Filter & Search Toolbar -->
+            <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+                <div class="flex items-center space-x-2 overflow-x-auto pb-2 sm:pb-0">
+                    <button data-filter="all" class="platform-filter active px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600 text-white transition">
+                        Tất cả
+                    </button>
+                    <button data-filter="tiktok" class="platform-filter px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-400 hover:text-white transition">
+                        TikTok
+                    </button>
+                    <button data-filter="instagram" class="platform-filter px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-400 hover:text-white transition">
+                        Instagram
+                    </button>
+                    <button data-filter="threads" class="platform-filter px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-400 hover:text-white transition">
+                        Threads
+                    </button>
+                    <button data-filter="facebook" class="platform-filter px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 text-slate-400 hover:text-white transition">
+                        Facebook
+                    </button>
+                </div>
+
+                <!-- Search Input -->
+                <div class="relative w-full sm:w-72">
+                    <span class="absolute left-3 top-2.5 text-slate-500">
+                        <i data-lucide="search" class="w-4 h-4"></i>
+                    </span>
+                    <input 
+                        type="text" 
+                        id="searchInput" 
+                        placeholder="Tìm theo tên, ghi chú..."
+                        class="w-full bg-slate-900 border border-slate-800 focus:border-indigo-500 rounded-xl pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 outline-none transition"
+                    />
+                </div>
+            </div>
+
+            <!-- Vaults Grid -->
+            <div id="vaultsGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Vault Cards dynamically injected here -->
+            </div>
+
+            <!-- Empty State -->
+            <div id="emptyState" class="hidden text-center py-16 px-4 glass-panel rounded-2xl">
+                <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-800/80 flex items-center justify-center text-slate-500">
+                    <i data-lucide="folder-search" class="w-8 h-8"></i>
+                </div>
+                <h3 class="text-base font-bold text-white mb-1">Chưa có kho lưu trữ nào</h3>
+                <p class="text-xs text-slate-400 max-w-sm mx-auto">
+                    Dán link bài viết hoặc tài khoản mạng xã hội ở trên để bắt đầu trích xuất và lưu trữ.
+                </p>
+            </div>
+        </section>
+    </main>
+
+    <!-- Gallery / Detail Modal -->
+    <div id="galleryModal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-hidden">
+        <div class="bg-slate-900 border border-slate-800 w-full max-w-6xl max-h-[92vh] rounded-2xl flex flex-col shadow-2xl overflow-hidden animate-scale-up">
+            <!-- Modal Header -->
+            <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <span id="modalPlatformBadge" class="text-[10px] font-bold px-2 py-0.5 rounded uppercase"></span>
+                        <h3 id="modalVaultName" class="text-lg font-bold text-white">Chi tiết Kho</h3>
+                    </div>
+                    <p id="modalVaultNotes" class="text-xs text-slate-400 mt-0.5"></p>
+                </div>
+                
+                <div class="flex items-center space-x-3">
+                    <button id="modalBtnDownloadZip" class="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition shadow">
+                        <i data-lucide="file-archive" class="w-4 h-4"></i>
+                        <span>Tải file .ZIP</span>
+                    </button>
+                    <button id="modalBtnClose" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Modal Subnav (Tabs: All, Photos, Videos) -->
+            <div class="px-6 py-3 bg-slate-900/60 border-b border-slate-800/80 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <button data-media-tab="all" class="media-tab active px-3 py-1 rounded-lg text-xs font-medium bg-indigo-600 text-white transition">
+                        Tất cả (<span id="modalCountAll">0</span>)
+                    </button>
+                    <button data-media-tab="image" class="media-tab px-3 py-1 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 hover:text-white transition">
+                        Ảnh (<span id="modalCountImg">0</span>)
+                    </button>
+                    <button data-media-tab="video" class="media-tab px-3 py-1 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 hover:text-white transition">
+                        Video (<span id="modalCountVid">0</span>)
+                    </button>
+                </div>
+                <div class="text-xs text-slate-400">
+                    Tổng dung lượng: <span id="modalTotalSize" class="text-slate-200 font-semibold">0 MB</span>
+                </div>
+            </div>
+
+            <!-- Media Grid Body -->
+            <div class="flex-1 overflow-y-auto p-6">
+                <div id="modalMediaGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    <!-- Media Items populated dynamically -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lightbox / Preview Modal (for single photo or video playback) -->
+    <div id="lightboxModal" class="fixed inset-0 z-60 hidden bg-black/95 flex items-center justify-center p-4">
+        <button id="lightboxBtnClose" class="absolute top-4 right-4 z-10 w-10 h-10 rounded-full bg-slate-800/80 hover:bg-slate-700 text-white flex items-center justify-center transition">
+            <i data-lucide="x" class="w-6 h-6"></i>
+        </button>
+
+        <div class="max-w-4xl max-h-[85vh] w-full flex flex-col items-center justify-center space-y-4">
+            <div id="lightboxContent" class="w-full flex items-center justify-center overflow-hidden rounded-xl bg-black">
+                <!-- Video or Img tag injected dynamically -->
+            </div>
+            <div class="w-full flex items-center justify-between text-xs text-slate-300 px-2">
+                <p id="lightboxCaption" class="truncate max-w-lg"></p>
+                <a id="lightboxBtnDownload" href="#" download class="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg transition">
+                    <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                    <span>Tải file gốc</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings / Cookies Modal -->
+    <div id="settingsModal" class="fixed inset-0 z-50 hidden bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 w-full max-w-lg rounded-2xl p-6 shadow-2xl space-y-5 animate-scale-up">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                        <i data-lucide="cookie" class="w-4 h-4"></i>
+                    </div>
+                    <h3 class="text-base font-bold text-white">Quản Lý File Cookies (Meta / TikTok)</h3>
+                </div>
+                <button id="settingsBtnClose" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <div class="text-xs text-slate-400 space-y-2">
+                <p>
+                    Để trích xuất các trang cá nhân Facebook, bài viết hạn chế hoặc Instagram/Threads riêng tư, hãy tải file <code class="text-amber-400">cookies.txt</code> được xuất từ trình duyệt của bạn.
+                </p>
+                <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800 space-y-1">
+                    <p class="font-semibold text-slate-300">Cách lấy file cookies.txt:</p>
+                    <ol class="list-decimal list-inside space-y-0.5 text-slate-400">
+                        <li>Cài tiện ích Chrome: <strong class="text-indigo-400">Get cookies.txt LOCALLY</strong></li>
+                        <li>Đăng nhập Facebook / Instagram trên trình duyệt Chrome</li>
+                        <li>Bấm vào biểu tượng tiện ích và chọn <em>Export cookies.txt</em></li>
+                        <li>Tải file vừa xuất lên hệ thống bên dưới</li>
+                    </ol>
+                </div>
+            </div>
+
+            <!-- Cookie Status Box -->
+            <div id="cookieStatusInfo" class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3.5 text-xs flex items-center justify-between">
+                <div>
+                    <p class="font-semibold text-slate-200" id="cookieStatusTitle">Đang kiểm tra...</p>
+                    <p class="text-slate-400 text-[11px]" id="cookieStatusDetails"></p>
+                </div>
+                <button id="btnDeleteCookie" class="hidden text-xs text-rose-400 hover:text-rose-300 px-2 py-1 bg-rose-500/10 rounded-lg">
+                    Xóa cookie
+                </button>
+            </div>
+
+            <!-- Upload Area -->
+            <form id="cookieUploadForm" class="space-y-3">
+                <div class="border-2 border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-6 text-center cursor-pointer transition relative bg-slate-950/40">
+                    <input type="file" id="cookieFileInput" accept=".txt" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                    <i data-lucide="upload-cloud" class="w-8 h-8 text-slate-400 mx-auto mb-2"></i>
+                    <p class="text-xs font-semibold text-slate-300">Nhấp để chọn hoặc kéo thả tệp cookies.txt vào đây</p>
+                    <p id="cookieFileName" class="text-[11px] text-indigo-400 mt-1 font-medium"></p>
+                </div>
+
+                <button type="submit" id="btnUploadCookieSubmit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2.5 rounded-xl text-xs transition disabled:opacity-50">
+                    Tải lên và Áp dụng
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="fixed bottom-4 right-4 z-70 space-y-2 pointer-events-none"></div>
+
+    <!-- Scripts -->
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
