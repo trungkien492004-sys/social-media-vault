@@ -9,6 +9,7 @@ import uvicorn
 
 from app.config import settings
 from app.database import init_db
+from app import storage
 from app.routers import tasks, vaults, settings as settings_router
 
 # Lifespan context manager
@@ -16,6 +17,8 @@ from app.routers import tasks, vaults, settings as settings_router
 async def lifespan(app: FastAPI):
     # Initialize DB tables on startup
     init_db()
+    settings_router.restore_cookie_from_db()
+    await storage.ensure_bucket()
     yield
 
 # Initialize FastAPI App

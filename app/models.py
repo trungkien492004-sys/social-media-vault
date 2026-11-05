@@ -41,7 +41,17 @@ class MediaItem(Base):
     original_url = Column(Text, nullable=True)
     caption = Column(Text, nullable=True)
     thumbnail_url = Column(String(500), nullable=True)
+    file_url = Column(String(1000), nullable=True)  # Public URL in persistent storage (Supabase), if enabled
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
     vault = relationship("Vault", back_populates="media_items")
+
+
+class AppSetting(Base):
+    """Key/value store that survives restarts (used for cookies.txt on ephemeral hosts)."""
+    __tablename__ = "app_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

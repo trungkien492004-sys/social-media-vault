@@ -165,3 +165,23 @@ Các bài viết công khai trên TikTok có thể tải ngay mà không cần t
 ## 🛡️ Giấy Phép & Lưu Ý
 - Ứng dụng phục vụ mục đích sao lưu cá nhân, lưu trữ tài liệu học tập, nghiên cứu và quản lý dữ liệu chính chủ.
 - Vui lòng tuân thủ bản quyền nội dung và điều khoản dịch vụ của các nền tảng mạng xã hội.
+
+## Lưu trữ vĩnh viễn với Supabase (khuyên dùng khi deploy Render Free)
+
+Render Free xóa ổ đĩa khi ngủ/redeploy. Để không mất dữ liệu, dùng Supabase miễn phí:
+
+1. Tạo project tại https://supabase.com (đặt mật khẩu database, nhớ mật khẩu này).
+2. **Database:** Project Settings → Database → *Connection string* → chọn **Session pooler** (URI), thay `[YOUR-PASSWORD]` bằng mật khẩu.
+3. **Storage key:** Project Settings → API → copy **Project URL** và khóa **service_role** (giữ bí mật, không đưa lên GitHub).
+4. Trong Render Dashboard → service → **Environment**, thêm:
+   | Biến | Giá trị |
+   |------|---------|
+   | `DATABASE_URL` | chuỗi kết nối Session pooler ở bước 2 |
+   | `SUPABASE_URL` | Project URL, ví dụ `https://abcd.supabase.co` |
+   | `SUPABASE_SERVICE_KEY` | khóa `service_role` |
+   | `SUPABASE_BUCKET` | `vault` (ứng dụng tự tạo bucket công khai này) |
+5. Lưu để Render deploy lại.
+
+Cách hoạt động: ảnh/video được tải lên Supabase Storage ngay sau khi tải, link lưu trong database, bản trên đĩa bị xóa. `cookies.txt` được lưu trong database và tự khôi phục khi khởi động. Nếu không đặt các biến này, ứng dụng vẫn chạy như cũ (lưu trên đĩa, SQLite).
+
+Giới hạn: gói Free của Supabase cho mỗi file tối đa 50 MB và tổng 1 GB lưu trữ. File lớn hơn 50 MB chỉ nằm tạm trên đĩa Render.

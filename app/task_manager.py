@@ -10,6 +10,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app import storage
 from app.database import SessionLocal
 from app.models import Vault, MediaItem
 from app.extractor import (
@@ -208,6 +209,18 @@ class TaskManager:
                 for idx, item in enumerate(extracted_items, start=1):
                     result = await download_file(client, item, vault_folder, idx)
                     if result:
+                        # Persist to Supabase Storage (if configured) and free local disk
+                        file_url = None
+                        if storage.enabled():
+                            local_file = settings.VAULT_DIR / result["file_path"]
+                            file_url = await storage.upload_file(client, local_file, result["file_path"])
+                            if file_url:
+                                try:
+                                    local_file.unlink()
+                                except Exception:
+                                    pass
+                        result["file_url"] = file_url
+
                         saved_items_count += 1
                         total_bytes += result["file_size"]
                         if result["file_type"] == "image":
@@ -224,7 +237,8 @@ class TaskManager:
                             file_size=result["file_size"],
                             original_url=result["original_url"],
                             caption=result["caption"],
-                            thumbnail_url=result["thumbnail_url"]
+                            thumbnail_url=result["thumbnail_url"],
+                            file_url=result["file_url"]
                         )
                         db.add(media_db)
                         db.commit()
@@ -241,6 +255,7 @@ class TaskManager:
                                 "id": media_db.id,
                                 "file_name": media_db.file_name,
                                 "file_path": media_db.file_path,
+                                "file_url": media_db.file_url,
                                 "file_type": media_db.file_type,
                                 "file_size": media_db.file_size
                             }

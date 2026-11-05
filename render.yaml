@@ -12,3 +12,12 @@ services:
         value: 10000
       - key: DEBUG
         value: "False"
+      # Persistent storage (set these values in Render Dashboard > Environment; never commit them)
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: vault

@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = f"sqlite:///{BASE_DIR}/data/vault.db"
     
+    # Optional persistent storage (Supabase). Leave empty to keep everything on local disk.
+    SUPABASE_URL: str = ""
+    SUPABASE_SERVICE_KEY: str = ""
+    SUPABASE_BUCKET: str = "vault"
+
     # Extraction Limits & Rate Limiting
     MAX_ITEMS_PER_TASK: int = 100
     RATE_LIMIT_DELAY_MIN: float = 0.5

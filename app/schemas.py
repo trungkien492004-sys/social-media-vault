@@ -29,6 +29,7 @@ class MediaItemOut(BaseModel):
     original_url: Optional[str] = None
     caption: Optional[str] = None
     thumbnail_url: Optional[str] = None
+    file_url: Optional[str] = None
     created_at: datetime
 
     class Config:

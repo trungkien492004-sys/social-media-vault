@@ -78,6 +78,11 @@ const PLATFORM_CONFIG = {
     }
 };
 
+// Public storage URL when available (Supabase), otherwise the locally served file
+function mediaUrl(item) {
+    return item.file_url || `/vault/${encodeURI(item.file_path)}`;
+}
+
 function escapeHtml(str) {
     return String(str ?? "").replace(/[&<>"']/g, c => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -514,7 +519,7 @@ function updateProgressCard(data) {
         feed.classList.remove("hidden");
         const mini = document.createElement("div");
         mini.className = "w-14 h-14 rounded-lg bg-slate-800 overflow-hidden shrink-0 border border-slate-700 relative flex items-center justify-center";
-        const src = `/vault/${encodeURI(item.file_path)}`;
+        const src = mediaUrl(item);
         if (item.file_type === "image") {
             mini.innerHTML = `<img src="${src}" class="w-full h-full object-cover" />`;
         } else {
@@ -631,7 +636,7 @@ function renderModalMedia() {
         const itemEl = document.createElement("div");
         itemEl.className = "group relative aspect-square rounded-xl bg-slate-800/80 overflow-hidden border border-slate-700/60 cursor-pointer shadow hover:border-indigo-500 transition";
 
-        const filePath = `/vault/${encodeURI(item.file_path)}`;
+        const filePath = mediaUrl(item);
 
         if (item.file_type === "image") {
             itemEl.innerHTML = `
@@ -688,14 +693,14 @@ function renderLightbox() {
     const captionEl = document.getElementById("lightboxCaption");
     const btnDownload = document.getElementById("lightboxBtnDownload");
     const counter = document.getElementById("lightboxCounter");
-    const filePath = `/vault/${encodeURI(item.file_path)}`;
+    const filePath = mediaUrl(item);
 
     // Stop any previous video before replacing the content
     const prev = container.querySelector("video");
     if (prev) { prev.pause(); prev.removeAttribute("src"); prev.load(); }
 
     captionEl.textContent = item.caption || item.file_name;
-    btnDownload.href = filePath;
+    btnDownload.href = item.file_url ? `${item.file_url}?download=${encodeURIComponent(item.file_name)}` : filePath;
     btnDownload.setAttribute("download", item.file_name);
     counter.textContent = `${lightboxIndex + 1} / ${lightboxItems.length}`;
 

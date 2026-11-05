@@ -12,6 +12,8 @@ from app.database import get_db
 from app.models import Vault, MediaItem
 from app.schemas import VaultOut, VaultDetailOut
 from app.config import settings
+from app import storage
+import httpx
 
 router = APIRouter(prefix="/api/vaults", tags=["Vaults"])
 
@@ -77,6 +79,10 @@ def delete_vault(vault_id: int, db: Session = Depends(get_db)):
         except Exception as e:
             pass
 
+    # Remove files from persistent storage too
+    if storage.enabled():
+        storage.delete_keys([m.file_path for m in vault.media_items if m.file_url])
+
     db.delete(vault)
     db.commit()
     return {"status": "success", "message": f"Đã xóa kho lưu trữ '{vault.custom_name}'"}
@@ -94,25 +100,34 @@ def download_vault_zip(vault_id: int, background_tasks: BackgroundTasks, db: Ses
     if not vault:
         raise HTTPException(status_code=404, detail="Không tìm thấy kho lưu trữ")
 
-    vault_dir = settings.VAULT_DIR / vault.folder_name
-    if not vault_dir.exists() or not vault_dir.is_dir():
-        raise HTTPException(status_code=404, detail="Thư mục dữ liệu media không tồn tại trên hệ thống")
-
     # Create temporary zip file
     temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     temp_zip_path = temp_zip.name
     temp_zip.close()
 
+    added = 0
     try:
         with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for root, dirs, files in os.walk(vault_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, vault_dir)
-                    zip_file.write(file_path, arcname=arcname)
+            for item in vault.media_items:
+                local = settings.VAULT_DIR / item.file_path
+                if local.exists():
+                    zip_file.write(local, arcname=item.file_name)
+                    added += 1
+                elif item.file_url:
+                    # File lives in persistent storage: stream it into the archive
+                    with httpx.stream("GET", item.file_url, timeout=120.0, follow_redirects=True) as resp:
+                        if resp.status_code == 200:
+                            with zip_file.open(item.file_name, "w", force_zip64=True) as dest:
+                                for chunk in resp.iter_bytes(1024 * 256):
+                                    dest.write(chunk)
+                            added += 1
     except Exception as e:
         remove_temp_file(temp_zip_path)
         raise HTTPException(status_code=500, detail=f"Lỗi khi nén tệp ZIP: {str(e)}")
+
+    if added == 0:
+        remove_temp_file(temp_zip_path)
+        raise HTTPException(status_code=404, detail="Không có tệp media nào để nén")
 
     background_tasks.add_task(remove_temp_file, temp_zip_path)
     safe_filename = f"{vault.folder_name}.zip"
