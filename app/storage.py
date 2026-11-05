@@ -29,14 +29,24 @@ def _base() -> str:
     return settings.SUPABASE_URL.rstrip("/")
 
 
+last_error: str = ""
+
+
 def _headers(extra: Optional[dict] = None) -> dict:
-    h = {
-        "Authorization": f"Bearer {settings.SUPABASE_SERVICE_KEY}",
-        "apikey": settings.SUPABASE_SERVICE_KEY,
-    }
+    key = settings.SUPABASE_SERVICE_KEY.strip()
+    h = {"apikey": key}
+    # New-style keys (sb_secret_...) are not JWTs: they must only be sent in the apikey header.
+    if not key.startswith("sb_"):
+        h["Authorization"] = f"Bearer {key}"
     if extra:
         h.update(extra)
     return h
+
+
+def _fail(msg: str) -> None:
+    global last_error
+    last_error = msg
+    logger.warning("Supabase: %s", msg)
 
 
 def public_url(key: str) -> str:
@@ -57,9 +67,9 @@ async def ensure_bucket() -> None:
             if resp.status_code in (200, 201):
                 logger.info("Created Supabase bucket '%s'", settings.SUPABASE_BUCKET)
             elif resp.status_code not in (400, 409):  # already exists
-                logger.warning("Supabase bucket check: %s %s", resp.status_code, resp.text[:200])
+                _fail(f"bucket {resp.status_code}: {resp.text[:200]}")
     except Exception as e:
-        logger.warning("Supabase bucket check failed: %s", e)
+        _fail(f"bucket error: {e}")
 
 
 async def upload_file(client: httpx.AsyncClient, local_path: Path, key: str) -> Optional[str]:
@@ -81,9 +91,9 @@ async def upload_file(client: httpx.AsyncClient, local_path: Path, key: str) -> 
         )
         if resp.status_code in (200, 201):
             return public_url(key)
-        logger.warning("Supabase upload failed (%s): %s", resp.status_code, resp.text[:200])
+        _fail(f"upload {resp.status_code}: {resp.text[:200]}")
     except Exception as e:
-        logger.warning("Supabase upload error for %s: %s", key, e)
+        _fail(f"upload error: {e}")
     return None
 
 

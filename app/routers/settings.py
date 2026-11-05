@@ -40,6 +40,19 @@ def restore_cookie_from_db() -> None:
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
+@router.get("/storage")
+def get_storage_status():
+    """Diagnostics (no secrets): shows whether persistent storage and Postgres are active."""
+    from app import storage
+    from app.database import IS_SQLITE
+    return {
+        "supabase_configured": storage.enabled(),
+        "bucket": settings.SUPABASE_BUCKET,
+        "database": "sqlite (NOT persistent on Render)" if IS_SQLITE else "postgres",
+        "last_storage_error": storage.last_error or None,
+    }
+
+
 @router.get("/cookies", response_model=CookieStatus)
 def get_cookie_status():
     cookie_path = settings.COOKIES_FILE
