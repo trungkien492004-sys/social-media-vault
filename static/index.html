@@ -347,6 +347,15 @@
                 </button>
             </div>
 
+            <div class="px-6 py-3 border-b border-slate-800/80 space-y-2">
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input id="diagUrl" type="text" placeholder="Dán link Facebook/Instagram để kiểm tra máy chủ có vào được không"
+                        class="flex-1 bg-slate-950 border border-slate-700 focus:border-violet-500 text-white rounded-lg px-3 py-2 text-xs outline-none placeholder-slate-500" />
+                    <button id="btnDiagnose" class="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold transition disabled:opacity-50">Kiểm tra kết nối</button>
+                </div>
+                <pre id="diagResult" class="hidden text-[11px] leading-relaxed text-slate-300 bg-slate-950 border border-slate-800 rounded-lg p-3 whitespace-pre-wrap break-all max-h-56 overflow-y-auto"></pre>
+            </div>
+
             <div id="adminOverview" class="px-6 py-3 border-b border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs"></div>
 
             <div class="flex-1 overflow-y-auto p-6 space-y-4">
@@ -418,8 +427,11 @@
                         Video (<span id="modalCountVid">0</span>)
                     </button>
                 </div>
-                <div class="text-xs text-slate-400">
-                    Tổng dung lượng: <span id="modalTotalSize" class="text-slate-200 font-semibold">0 MB</span>
+                <div class="flex items-center gap-3 text-xs text-slate-400">
+                    <button id="btnSelectMode" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1 rounded-lg font-medium transition">Chọn nhiều</button>
+                    <button id="btnSelectAll" class="hidden bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1 rounded-lg font-medium transition">Chọn tất cả</button>
+                    <button id="btnDeleteSelected" class="hidden bg-rose-600 hover:bg-rose-500 text-white px-3 py-1 rounded-lg font-semibold transition">Xóa (0)</button>
+                    <span class="hidden sm:inline">Tổng: <span id="modalTotalSize" class="text-slate-200 font-semibold">0 MB</span></span>
                 </div>
             </div>
 
@@ -457,10 +469,81 @@
                         <input id="lightboxAutoNext" type="checkbox" checked class="accent-indigo-500">
                         <span>Tự chuyển</span>
                     </label>
+                    <button id="lightboxBtnEdit" class="flex items-center space-x-1.5 bg-violet-600 hover:bg-violet-500 text-white px-3 py-1.5 rounded-lg transition">
+                        <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5"></i>
+                        <span>Chỉnh sửa</span>
+                    </button>
+                    <button id="lightboxBtnDelete" class="flex items-center space-x-1.5 bg-rose-600 hover:bg-rose-500 text-white px-3 py-1.5 rounded-lg transition">
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        <span>Xóa</span>
+                    </button>
                     <a id="lightboxBtnDownload" href="#" download class="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg transition">
                         <i data-lucide="download" class="w-3.5 h-3.5"></i>
                         <span>Tải file gốc</span>
                     </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Editor Modal (image: crop/rotate/flip/brightness...; video: trim/rotate/flip/brightness...) -->
+    <div id="editorModal" class="fixed inset-0 z-[80] hidden bg-black/95 flex items-center justify-center p-3 sm:p-6">
+        <div class="bg-slate-900 border border-slate-800 w-full max-w-5xl max-h-[95vh] rounded-2xl flex flex-col overflow-hidden shadow-2xl">
+            <div class="px-5 py-3 border-b border-slate-800 flex items-center justify-between">
+                <h3 id="editorTitle" class="text-sm font-bold text-white">Chỉnh sửa</h3>
+                <button id="editorBtnClose" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-4 grid lg:grid-cols-[1fr_280px] gap-4">
+                <!-- Preview -->
+                <div class="bg-black rounded-xl flex items-center justify-center overflow-hidden min-h-[240px] relative select-none">
+                    <div id="editorImageWrap" class="relative hidden" style="touch-action:none">
+                        <canvas id="editorCanvas" class="max-w-full max-h-[60vh] block"></canvas>
+                        <div id="cropBox" class="absolute border-2 border-dashed border-emerald-400 bg-emerald-400/10 hidden pointer-events-none"></div>
+                    </div>
+                    <div id="editorVideoWrap" class="hidden w-full flex items-center justify-center overflow-hidden">
+                        <video id="editorVideo" controls playsinline class="max-h-[60vh] max-w-full"></video>
+                    </div>
+                </div>
+                <!-- Controls -->
+                <div class="space-y-3 text-xs text-slate-300">
+                    <div class="grid grid-cols-4 gap-1.5">
+                        <button data-edit-act="rotL" class="edit-btn bg-slate-800 hover:bg-slate-700 rounded-lg py-2" title="Xoay trái 90°"><i data-lucide="rotate-ccw" class="w-4 h-4 mx-auto"></i></button>
+                        <button data-edit-act="rotR" class="edit-btn bg-slate-800 hover:bg-slate-700 rounded-lg py-2" title="Xoay phải 90°"><i data-lucide="rotate-cw" class="w-4 h-4 mx-auto"></i></button>
+                        <button data-edit-act="flipH" class="edit-btn bg-slate-800 hover:bg-slate-700 rounded-lg py-2" title="Lật ngang"><i data-lucide="flip-horizontal" class="w-4 h-4 mx-auto"></i></button>
+                        <button data-edit-act="flipV" class="edit-btn bg-slate-800 hover:bg-slate-700 rounded-lg py-2" title="Lật dọc"><i data-lucide="flip-vertical" class="w-4 h-4 mx-auto"></i></button>
+                    </div>
+                    <div id="editorCropControls" class="hidden space-y-1.5">
+                        <p class="text-slate-400">Cắt ảnh: kéo chuột trên ảnh để chọn vùng giữ lại.</p>
+                        <button id="editorBtnClearCrop" class="w-full bg-slate-800 hover:bg-slate-700 rounded-lg py-1.5">Bỏ vùng cắt</button>
+                    </div>
+                    <div id="editorTrimControls" class="hidden space-y-1.5">
+                        <p class="text-slate-400">Cắt đoạn video (giây):</p>
+                        <div class="flex items-center gap-1.5">
+                            <input id="trimStart" type="number" min="0" step="0.1" value="0" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-white">
+                            <button id="trimSetStart" class="shrink-0 bg-slate-800 hover:bg-slate-700 rounded-lg px-2 py-1.5" title="Lấy thời điểm đang xem">◀ đầu</button>
+                        </div>
+                        <div class="flex items-center gap-1.5">
+                            <input id="trimEnd" type="number" min="0" step="0.1" value="0" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-white">
+                            <button id="trimSetEnd" class="shrink-0 bg-slate-800 hover:bg-slate-700 rounded-lg px-2 py-1.5" title="Lấy thời điểm đang xem">cuối ▶</button>
+                        </div>
+                    </div>
+                    <label class="block">Độ sáng <span id="valBrightness" class="text-slate-500">100%</span>
+                        <input id="editBrightness" type="range" min="20" max="200" value="100" class="w-full accent-indigo-500"></label>
+                    <label class="block">Tương phản <span id="valContrast" class="text-slate-500">100%</span>
+                        <input id="editContrast" type="range" min="20" max="200" value="100" class="w-full accent-indigo-500"></label>
+                    <label class="block">Độ bão hòa màu <span id="valSaturation" class="text-slate-500">100%</span>
+                        <input id="editSaturation" type="range" min="0" max="300" value="100" class="w-full accent-indigo-500"></label>
+                    <button id="editorBtnReset" class="w-full bg-slate-800 hover:bg-slate-700 rounded-lg py-1.5">Đặt lại tất cả</button>
+                    <div class="pt-2 border-t border-slate-800 space-y-2">
+                        <label class="block">Cách lưu
+                            <select id="editorMode" class="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-white">
+                                <option value="replace">Ghi đè lên tệp gốc</option>
+                                <option value="copy">Lưu thành tệp mới (giữ bản gốc)</option>
+                            </select>
+                        </label>
+                        <button id="editorBtnSave" class="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold rounded-lg py-2">Lưu thay đổi</button>
+                        <p id="editorStatus" class="text-slate-400 min-h-[1rem]"></p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -528,5 +611,6 @@
 
     <!-- Scripts -->
     <script src="/static/js/app.js"></script>
+    <script src="/static/js/editor.js"></script>
 </body>
 </html>

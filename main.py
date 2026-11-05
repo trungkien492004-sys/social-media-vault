@@ -10,7 +10,7 @@ import uvicorn
 from app.config import settings
 from app.database import init_db
 from app import storage
-from app.routers import tasks, vaults, settings as settings_router, auth as auth_router, admin as admin_router
+from app.routers import tasks, vaults, settings as settings_router, auth as auth_router, admin as admin_router, media as media_router
 
 # Lifespan context manager
 @asynccontextmanager
@@ -46,6 +46,7 @@ app.include_router(auth_router.router)
 app.include_router(admin_router.router)
 app.include_router(tasks.router)
 app.include_router(vaults.router)
+app.include_router(media_router.router)
 app.include_router(settings_router.router)
 
 # Mount Static Folders

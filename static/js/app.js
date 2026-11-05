@@ -434,6 +434,7 @@ function setupEventListeners() {
     document.addEventListener("keydown", (e) => {
         const open = !document.getElementById("lightboxModal").classList.contains("hidden");
         if (!open) return;
+        if (!document.getElementById("editorModal").classList.contains("hidden")) return;
         if (e.key === "ArrowLeft") stepLightbox(-1);
         else if (e.key === "ArrowRight") stepLightbox(1);
         else if (e.key === "Escape") closeLightbox();
@@ -865,6 +866,9 @@ async function openGalleryModal(vaultId) {
 function closeGalleryModal() {
     document.getElementById("galleryModal").classList.add("hidden");
     currentVaultDetail = null;
+    selectMode = false;
+    selectedIds.clear();
+    updateSelectUi();
 }
 
 // Render Media inside Modal Grid
@@ -912,7 +916,21 @@ function renderModalMedia() {
             `;
         }
 
-        itemEl.addEventListener("click", () => openLightbox(item, items));
+        const picked = selectedIds.has(item.id);
+        if (selectMode) {
+            itemEl.classList.toggle("ring-2", picked);
+            itemEl.classList.toggle("ring-rose-500", picked);
+            itemEl.insertAdjacentHTML("beforeend", `<div class="absolute top-2 left-2 w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold ${picked ? "bg-rose-600 text-white" : "bg-black/60 text-transparent border border-white/60"}">✓</div>`);
+        }
+        itemEl.addEventListener("click", () => {
+            if (selectMode) {
+                if (selectedIds.has(item.id)) selectedIds.delete(item.id); else selectedIds.add(item.id);
+                renderModalMedia();
+                updateSelectUi();
+            } else {
+                openLightbox(item, items);
+            }
+        });
         grid.appendChild(itemEl);
     });
 
@@ -1279,6 +1297,39 @@ document.addEventListener("DOMContentLoaded", () => {
             showToast(e.message, "error");
         } finally {
             btn.disabled = false;
+        }
+    });
+});
+
+
+// ---------------- Admin: server connectivity diagnosis ----------------
+document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("btnDiagnose").addEventListener("click", async () => {
+        const btn = document.getElementById("btnDiagnose");
+        const out = document.getElementById("diagResult");
+        const url = document.getElementById("diagUrl").value.trim();
+        btn.disabled = true;
+        btn.textContent = "Đang kiểm tra (có thể mất 1 phút)...";
+        out.classList.remove("hidden");
+        out.textContent = "Đang chạy...";
+        try {
+            const res = await fetch(`/api/admin/diagnose${url ? `?url=${encodeURIComponent(url)}` : ""}`);
+            const d = await res.json();
+            if (!res.ok) throw new Error(d.detail || "Lỗi");
+            const lines = [
+                `Link: ${d.url}`,
+                `IP máy chủ: ${d.server_ip}`,
+                `Đã nạp cookie: ${d.has_cookies ? "có" : "chưa"}`,
+                `Mở trang bằng HTTP: ${d.http && d.http.error ? "LỖI " + d.http.error : `mã ${d.http.status}, ${d.http.redirected_to_login ? "BỊ CHUYỂN SANG TRANG ĐĂNG NHẬP" : "không bị chuyển đăng nhập"}, ${d.http.has_video_data ? "thấy dữ liệu video" : "không thấy dữ liệu video"} (${d.http.seconds}s)`}`,
+                `yt-dlp: ${d.ytdlp.ok ? "OK - " + (d.ytdlp.title || "") : "LỖI - " + (d.ytdlp.error || "không có kết quả")}`,
+                `gallery-dl: ${d.gallerydl.ok ? "OK - " + d.gallerydl.items + " mục" : "không lấy được" + (d.gallerydl.error ? " - " + d.gallerydl.error : "")}`
+            ];
+            out.textContent = lines.join("\n");
+        } catch (e) {
+            out.textContent = "Lỗi: " + e.message;
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Kiểm tra kết nối";
         }
     });
 });

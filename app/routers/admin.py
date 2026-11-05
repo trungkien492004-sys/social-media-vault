@@ -92,3 +92,62 @@ def delete_user(user_id: int, admin: User = Depends(require_admin), db: Session 
     db.delete(user)
     db.commit()
     return {"status": "success", "message": f"Đã xóa tài khoản {user.email} và toàn bộ kho của họ"}
+
+
+@router.get("/diagnose")
+def diagnose(
+    url: str = "https://www.facebook.com/watch/?v=10153231379946729",
+    admin: User = Depends(require_admin),
+):
+    """
+    Shows what THIS SERVER sees when it opens a link (is Facebook/Instagram blocking the host?).
+    Never returns cookie contents.
+    """
+    import time as _time
+    import httpx
+    import yt_dlp
+    from app.extractor import UA, extract_with_gallerydl
+
+    report = {"url": url, "server_ip": None, "http": None, "ytdlp": None, "gallerydl": None, "has_cookies": False}
+
+    try:
+        report["server_ip"] = httpx.get("https://api.ipify.org", timeout=10).text
+    except Exception as e:
+        report["server_ip"] = f"không lấy được: {e}"
+
+    cookie_file = settings.COOKIES_DIR / f"user_{admin.id}.txt"
+    report["has_cookies"] = cookie_file.exists() and cookie_file.stat().st_size > 0
+
+    t0 = _time.time()
+    try:
+        r = httpx.get(url, headers={"User-Agent": UA}, timeout=20, follow_redirects=True)
+        body = r.text.lower()
+        report["http"] = {
+            "status": r.status_code,
+            "final_url": str(r.url)[:200],
+            "redirected_to_login": "/login" in str(r.url).lower() or "log in to facebook" in body or "log into facebook" in body,
+            "has_video_data": any(k in body for k in ("playable_url", "browser_native", "video_url", "og:video")),
+            "seconds": round(_time.time() - t0, 1),
+        }
+    except Exception as e:
+        report["http"] = {"error": str(e)[:300]}
+
+    t0 = _time.time()
+    opts = {"quiet": True, "no_warnings": True, "skip_download": True, "noplaylist": True}
+    if report["has_cookies"]:
+        opts["cookiefile"] = str(cookie_file)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            report["ytdlp"] = {"ok": bool(info), "title": (info or {}).get("title"), "seconds": round(_time.time() - t0, 1)}
+    except Exception as e:
+        report["ytdlp"] = {"ok": False, "error": str(e)[:400], "seconds": round(_time.time() - t0, 1)}
+
+    t0 = _time.time()
+    try:
+        found = extract_with_gallerydl(url, cookie_file if report["has_cookies"] else None, 5)
+        report["gallerydl"] = {"ok": bool(found), "items": len(found), "seconds": round(_time.time() - t0, 1)}
+    except Exception as e:
+        report["gallerydl"] = {"ok": False, "error": str(e)[:300]}
+
+    return report
