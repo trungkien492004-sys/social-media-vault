@@ -17,6 +17,7 @@ from app.extractor import (
     detect_platform,
     sanitize_folder_name,
     extract_media_items,
+    extract_from_page_source,
     download_file
 )
 
@@ -135,7 +136,9 @@ class TaskManager:
         custom_name: str,
         notes: Optional[str],
         media_type: str,
-        max_items: int = 50
+        max_items: int = 50,
+        source_html: Optional[str] = None,
+        platform_override: Optional[str] = None
     ):
         db: Session = SessionLocal()
         vault = None
@@ -148,7 +151,7 @@ class TaskManager:
                 })
                 return
 
-            platform = detect_platform(url)
+            platform = platform_override or detect_platform(url)
             clean_name = sanitize_folder_name(custom_name)
             folder_name = f"{clean_name}_{platform}_{vault_id}"
             vault_folder = settings.VAULT_DIR / folder_name
@@ -171,20 +174,31 @@ class TaskManager:
             # 1. Extraction step
             user_cookie = settings.COOKIES_DIR / f"user_{user_id}.txt"
             cookies_file = user_cookie if user_cookie.exists() else None
-            extracted_items = await extract_media_items(
-                url=url,
-                platform=platform,
-                media_filter=media_type,
-                cookies_path=cookies_file,
-                max_items=max_items
-            )
+            if source_html:
+                loop = asyncio.get_event_loop()
+                extracted_items = await loop.run_in_executor(None, extract_from_page_source, source_html, max_items)
+                if media_type == "image":
+                    extracted_items = [i for i in extracted_items if i.file_type == "image"]
+                elif media_type == "video":
+                    extracted_items = [i for i in extracted_items if i.file_type == "video"]
+            else:
+                extracted_items = await extract_media_items(
+                    url=url,
+                    platform=platform,
+                    media_filter=media_type,
+                    cookies_path=cookies_file,
+                    max_items=max_items
+                )
 
             total_items = len(extracted_items)
             if total_items == 0:
-                if platform == "facebook":
-                    err_msg = "Facebook chặn xem trang này khi chưa đăng nhập (Facebook tự động chuyển sang trang Login). Hãy bấm nút 'Cài đặt Cookie' (góc trên bên phải) để nạp file cookies.txt của bạn một lần, sau đó hệ thống sẽ tải được ảnh/video từ trang này ngay!"
-                elif platform == "instagram":
-                    err_msg = "Instagram yêu cầu đăng nhập để xem trang cá nhân hoặc bài viết này. Hãy nạp file cookies.txt trong phần 'Cài đặt Cookie' (góc trên) để tiếp tục."
+                if source_html:
+                    err_msg = "Không tìm thấy video/ảnh trong mã nguồn đã dán. Hãy mở đúng bài viết hoặc video (đã đăng nhập, xem được bình thường) rồi sao chép lại TOÀN BỘ mã nguồn (Ctrl+U, Ctrl+A, Ctrl+C)."
+                elif platform in ("facebook", "instagram"):
+                    name = "Facebook" if platform == "facebook" else "Instagram"
+                    err_msg = (f"Không lấy được nội dung từ {name}. Nguyên nhân thường gặp: bài riêng tư/chỉ bạn bè, hoặc {name} chặn máy chủ khi chưa đăng nhập. "
+                               "Cách xử lý: (1) nạp cookies.txt ở nút 'Cài đặt Cookie', hoặc (2) mở bài viết trên trình duyệt đã đăng nhập, "
+                               "dùng ô 'Dán mã nguồn trang' bên dưới ô nhập link để tải được cả nội dung riêng tư.")
                 else:
                     err_msg = "Không tìm thấy nội dung media nào từ liên kết này (có thể là bài viết riêng tư, hoặc liên kết không chứa file video/ảnh)."
 

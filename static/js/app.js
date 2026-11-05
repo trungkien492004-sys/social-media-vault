@@ -1241,3 +1241,44 @@ async function confirmDuplicates(urls) {
         return true;
     }
 }
+
+
+// ---------------- Private content: paste page source ----------------
+document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("btnSubmitSource").addEventListener("click", async () => {
+        const html = document.getElementById("sourceInput").value;
+        if (html.trim().length < 200) {
+            showToast("Mã nguồn quá ngắn. Hãy sao chép TOÀN BỘ trang (Ctrl+A rồi Ctrl+C).", "error");
+            return;
+        }
+        const btn = document.getElementById("btnSubmitSource");
+        btn.disabled = true;
+        const customName = document.getElementById("customNameInput").value.trim();
+        try {
+            const res = await fetch("/api/tasks/start-source", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    html: html,
+                    custom_name: customName || null,
+                    notes: document.getElementById("notesInput").value.trim() || null,
+                    media_type: document.querySelector('input[name="mediaType"]:checked').value,
+                    max_items: parseInt(document.getElementById("maxItemsSelect")?.value || "50", 10)
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                const detail = Array.isArray(data.detail) ? data.detail.map(d => d.msg).join("; ") : data.detail;
+                throw new Error(detail || "Không thể xử lý mã nguồn");
+            }
+            document.getElementById("sourceInput").value = "";
+            document.getElementById("sourceBox").open = false;
+            showToast("Đang tách video/ảnh từ mã nguồn...", "info");
+            startBatchStream([data], [customName || "Mã nguồn trang"], customName || "Mã nguồn trang");
+        } catch (e) {
+            showToast(e.message, "error");
+        } finally {
+            btn.disabled = false;
+        }
+    });
+});

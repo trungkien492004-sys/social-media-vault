@@ -89,6 +89,8 @@ def link_history(
     )
     seen = {}
     for v in rows:
+        if v.profile_url.startswith("source://"):
+            continue
         entry = seen.get(v.profile_url)
         if entry is None:
             seen[v.profile_url] = {
@@ -116,6 +118,8 @@ async def retry_vault(
     vault = get_owned_vault(db, vault_id, user)
     if vault.user_id != user.id:
         raise HTTPException(status_code=403, detail="Chỉ chủ kho mới được tải lại")
+    if vault.profile_url.startswith("source://"):
+        raise HTTPException(status_code=400, detail="Kho tạo từ mã nguồn trang không tải lại được. Hãy dán lại mã nguồn mới (link video hết hạn sau vài giờ).")
     if vault.id in task_manager.active_vaults:
         raise HTTPException(status_code=409, detail="Kho này đang được xử lý, vui lòng đợi")
 

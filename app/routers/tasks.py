@@ -1,5 +1,6 @@
 import asyncio
 import re
+import uuid
 from typing import List, Optional
 from urllib.parse import urlparse
 
@@ -11,9 +12,9 @@ from app.database import get_db
 from sqlalchemy import func
 from app.auth import get_current_user
 from app.models import User, Vault
-from app.schemas import ExtractRequest, BatchExtractRequest, BatchTaskResponse, TaskResponse
+from app.schemas import ExtractRequest, BatchExtractRequest, BatchTaskResponse, TaskResponse, SourceExtractRequest
 from app.task_manager import task_manager
-from app.extractor import detect_platform, sanitize_folder_name, normalize_url
+from app.extractor import detect_platform, detect_platform_from_html, sanitize_folder_name, normalize_url
 from app.config import settings
 
 router = APIRouter(prefix="/api/tasks", tags=["Tasks"])
@@ -59,10 +60,16 @@ def create_and_dispatch(
     custom_name: str,
     notes: Optional[str],
     media_type: str,
-    max_items: int
+    max_items: int,
+    source_html: Optional[str] = None
 ) -> TaskResponse:
-    url = normalize_url(url)
-    platform = detect_platform(url)
+    if source_html:
+        # Content pasted from the user's logged-in browser: no network scraping of the page itself
+        platform = detect_platform_from_html(source_html)
+        url = f"source://{platform}/{uuid.uuid4().hex[:10]}"
+    else:
+        url = normalize_url(url)
+        platform = detect_platform(url)
     clean_name = sanitize_folder_name(custom_name)
 
     # Pre-create Vault entry to get ID
@@ -99,7 +106,9 @@ def create_and_dispatch(
             custom_name=custom_name,
             notes=notes,
             media_type=media_type,
-            max_items=max_items
+            max_items=max_items,
+            source_html=source_html,
+            platform_override=platform if source_html else None
         )
     )
 
@@ -141,6 +150,14 @@ async def start_batch(req: BatchExtractRequest, db: Session = Depends(get_db), u
         responses.append(create_and_dispatch(db, user, url, name, req.notes, req.media_type, req.max_items or 50))
 
     return BatchTaskResponse(tasks=responses)
+
+
+@router.post("/start-source", response_model=TaskResponse)
+async def start_from_source(req: SourceExtractRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Download media found in page source the user copied from their own logged-in browser."""
+    check_quota(db, user)
+    name = (req.custom_name or "").strip() or "Mã nguồn trang"
+    return create_and_dispatch(db, user, "", name, req.notes, req.media_type, req.max_items or 50, source_html=req.html)
 
 
 @router.get("/stream-multi")

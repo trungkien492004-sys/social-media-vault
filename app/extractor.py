@@ -458,6 +458,99 @@ def is_video_url(url: str) -> bool:
     markers = ("/reel/", "/reels/", "/tv/", "/watch", "fb.watch", "/videos/", "/video/", "/share/v/", "/share/r/")
     return any(m in u for m in markers)
 
+def _decode_json_url(raw: str) -> str:
+    """Page sources hold URLs as JSON strings (\\/ and \\u0025 escapes)."""
+    try:
+        import json as _json
+        return _json.loads('"' + raw + '"').replace("&amp;", "&")
+    except Exception:
+        return raw.replace("\\/", "/").replace("\\u0025", "%").replace("\\u0026", "&").replace("&amp;", "&")
+
+
+def detect_platform_from_html(html: str) -> str:
+    head = html[:200000].lower()
+    if "instagram.com" in head and "cdninstagram" in html.lower():
+        return "instagram"
+    if "threads.net" in head:
+        return "threads"
+    if "facebook.com" in head or "fbcdn.net" in html.lower():
+        return "facebook"
+    if "tiktok" in head:
+        return "tiktok"
+    if "zalo" in head:
+        return "zalo"
+    return "other"
+
+
+def extract_from_page_source(html: str, max_items: int = 50, page_url: str = "") -> List[ExtractedItem]:
+    """
+    Pull video/photo URLs out of the HTML source of a page the user could open while logged in.
+    This is how private posts work without sharing a password: the browser already did the login.
+    """
+    items: List[ExtractedItem] = []
+
+    video_patterns_hd = [
+        r'"(?:browser_native_hd_url|playable_url_quality_hd|hd_src_no_ratelimit|hd_src)"\s*:\s*"(https?:[^"]+)"',
+    ]
+    video_patterns_sd = [
+        r'"(?:browser_native_sd_url|playable_url|sd_src_no_ratelimit|sd_src)"\s*:\s*"(https?:[^"]+)"',
+        r'"video_url"\s*:\s*"(https?:[^"]+)"',
+        r'"video_versions"\s*:\s*\[\s*\{[^{}]*?"url"\s*:\s*"(https?:[^"]+)"',
+        r'<meta[^>]+property=["\']og:video(?::secure_url|:url)?["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<video[^>]+src=["\']([^"\']+)["\']',
+    ]
+
+    def collect(patterns):
+        found = []
+        for pat in patterns:
+            for m in re.finditer(pat, html, flags=re.I):
+                u = _decode_json_url(m.group(1))
+                if u.startswith("http") and u not in found:
+                    found.append(u)
+        return found
+
+    hd = collect(video_patterns_hd)
+    sd = collect(video_patterns_sd)
+    # Prefer HD links; fall back to SD when the page has no HD version
+    videos = hd if hd else sd
+    # Different qualities of the same clip share the file name; keep one URL per file name
+    seen_names = set()
+    unique_videos = []
+    for u in videos:
+        name = u.split("?")[0].rsplit("/", 1)[-1]
+        if name and name not in seen_names:
+            seen_names.add(name)
+            unique_videos.append(u)
+
+    for u in unique_videos[:max_items]:
+        items.append(ExtractedItem(
+            file_type="video", download_url=u, file_extension="mp4",
+            caption="", original_url=page_url or "https://www.facebook.com/"
+        ))
+
+    image_patterns = [
+        r'"(?:viewer_image|photo_image|image|large_image)"\s*:\s*\{[^{}]*?"uri"\s*:\s*"(https?:[^"]+)"',
+        r'"display_url"\s*:\s*"(https?:[^"]+)"',
+        r'"image_versions2"\s*:\s*\{\s*"candidates"\s*:\s*\[\s*\{[^{}]*?"url"\s*:\s*"(https?:[^"]+)"',
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+    ]
+    noise = re.compile(r"(/emoji|static\.xx|/rsrc\.php|[/_]s\d{2,3}x\d{2,3}|[/_]p\d{2,3}x\d{2,3}|/cp0/|profile_pic|/v/t39\.30808-1/)", re.I)
+    seen_img = set()
+    for u in collect(image_patterns):
+        key = u.split("?")[0]
+        if key in seen_img or noise.search(u):
+            continue
+        seen_img.add(key)
+        items.append(ExtractedItem(
+            file_type="image", download_url=u, file_extension="jpg",
+            caption="", thumbnail_url=u, original_url=page_url or "https://www.facebook.com/"
+        ))
+        if len(items) >= max_items:
+            break
+
+    return items[:max_items]
+
+
 async def extract_media_items(
     url: str,
     platform: str,

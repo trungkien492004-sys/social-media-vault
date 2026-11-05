@@ -39,6 +39,13 @@ class BatchExtractRequest(BaseModel):
     media_type: str = Field("all", pattern="^(all|image|video)$")
     max_items: Optional[int] = Field(30, ge=1, le=150)
 
+class SourceExtractRequest(BaseModel):
+    html: str = Field(..., min_length=200, max_length=15_000_000, description="Page source copied from a logged-in browser")
+    custom_name: Optional[str] = Field(None, max_length=100)
+    notes: Optional[str] = Field(None, max_length=500)
+    media_type: str = Field("all", pattern="^(all|image|video)$")
+    max_items: Optional[int] = Field(30, ge=1, le=150)
+
 class BatchTaskResponse(BaseModel):
     tasks: List["TaskResponse"]
 
