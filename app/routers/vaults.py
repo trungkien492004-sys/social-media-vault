@@ -8,8 +8,9 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 
+from app.auth import get_current_user
 from app.database import get_db
-from app.models import Vault, MediaItem
+from app.models import User, Vault, MediaItem
 from app.schemas import VaultOut, VaultDetailOut
 from app.config import settings
 from app import storage
@@ -17,20 +18,31 @@ import httpx
 
 router = APIRouter(prefix="/api/vaults", tags=["Vaults"])
 
+
+def get_owned_vault(db: Session, vault_id: int, user: User) -> Vault:
+    """Return the vault if it belongs to the user (admins may open any vault)."""
+    vault = db.query(Vault).filter(Vault.id == vault_id).first()
+    if not vault or (vault.user_id != user.id and not user.is_admin):
+        raise HTTPException(status_code=404, detail="Không tìm thấy kho lưu trữ")
+    return vault
+
 @router.get("/stats")
-def get_vault_stats(db: Session = Depends(get_db)):
-    total_vaults = db.query(func.count(Vault.id)).scalar() or 0
-    total_items = db.query(func.sum(Vault.total_items)).scalar() or 0
-    total_images = db.query(func.sum(Vault.total_images)).scalar() or 0
-    total_videos = db.query(func.sum(Vault.total_videos)).scalar() or 0
-    total_bytes = db.query(func.sum(Vault.total_size_bytes)).scalar() or 0
+def get_vault_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    def agg(col):
+        return db.query(col).filter(Vault.user_id == user.id).scalar() or 0
+    total_vaults = agg(func.count(Vault.id))
+    total_items = agg(func.sum(Vault.total_items))
+    total_images = agg(func.sum(Vault.total_images))
+    total_videos = agg(func.sum(Vault.total_videos))
+    total_bytes = agg(func.sum(Vault.total_size_bytes))
     
     return {
         "total_vaults": total_vaults,
         "total_items": total_items,
         "total_images": total_images,
         "total_videos": total_videos,
-        "total_size_bytes": total_bytes
+        "total_size_bytes": total_bytes,
+        "quota_bytes": 0 if (user.is_admin or settings.USER_QUOTA_MB <= 0) else settings.USER_QUOTA_MB * 1024 * 1024
     }
 
 @router.get("", response_model=List[VaultOut])
@@ -39,9 +51,10 @@ def list_vaults(
     platform: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
 ):
-    query = db.query(Vault)
+    query = db.query(Vault).filter(Vault.user_id == user.id)
     if platform and platform != "all":
         query = query.filter(Vault.platform == platform.lower())
     
@@ -59,17 +72,12 @@ def list_vaults(
     return vaults
 
 @router.get("/{vault_id}", response_model=VaultDetailOut)
-def get_vault_detail(vault_id: int, db: Session = Depends(get_db)):
-    vault = db.query(Vault).filter(Vault.id == vault_id).first()
-    if not vault:
-        raise HTTPException(status_code=404, detail="Không tìm thấy kho lưu trữ")
-    return vault
+def get_vault_detail(vault_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return get_owned_vault(db, vault_id, user)
 
 @router.delete("/{vault_id}")
-def delete_vault(vault_id: int, db: Session = Depends(get_db)):
-    vault = db.query(Vault).filter(Vault.id == vault_id).first()
-    if not vault:
-        raise HTTPException(status_code=404, detail="Không tìm thấy kho lưu trữ")
+def delete_vault(vault_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    vault = get_owned_vault(db, vault_id, user)
 
     # Clean up directory on disk
     vault_dir = settings.VAULT_DIR / vault.folder_name
@@ -95,10 +103,8 @@ def remove_temp_file(path: str):
         pass
 
 @router.get("/{vault_id}/download-zip")
-def download_vault_zip(vault_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    vault = db.query(Vault).filter(Vault.id == vault_id).first()
-    if not vault:
-        raise HTTPException(status_code=404, detail="Không tìm thấy kho lưu trữ")
+def download_vault_zip(vault_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    vault = get_owned_vault(db, vault_id, user)
 
     # Create temporary zip file
     temp_zip = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")

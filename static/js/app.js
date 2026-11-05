@@ -6,14 +6,241 @@ let currentVaultDetail = null;
 let currentMediaFilter = "all";
 let activeEventSource = null;
 
+let currentUser = null;
+let authMode = "login";
+
+// Any 401 from the API means the session expired: show the login screen again
+const _origFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+    const res = await _origFetch(...args);
+    const url = String(args[0] && args[0].url ? args[0].url : args[0]);
+    if (res.status === 401 && !url.includes("/api/auth/")) {
+        currentUser = null;
+        showAuthModal();
+    }
+    return res;
+};
+
 // Initialize when DOM is ready
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
     initLucide();
+    setupEventListeners();
+    setupAuthListeners();
+    await initAuth();
+});
+
+async function initAuth() {
+    try {
+        const res = await fetch("/api/auth/me");
+        if (res.ok) {
+            onLoggedIn(await res.json());
+            return;
+        }
+    } catch (e) {
+        console.error("Không kiểm tra được đăng nhập:", e);
+    }
+    showAuthModal();
+}
+
+function onLoggedIn(user) {
+    currentUser = user;
+    document.getElementById("authModal").classList.add("hidden");
+    document.getElementById("userBar").classList.remove("hidden");
+    document.getElementById("userBar").classList.add("flex");
+    document.getElementById("userEmailLabel").textContent = user.email;
+    document.getElementById("btnOpenAdmin").classList.toggle("hidden", !user.is_admin);
     loadStats();
     loadVaults();
     checkCookieStatus();
-    setupEventListeners();
-});
+    initLucide();
+}
+
+async function showAuthModal() {
+    document.getElementById("authModal").classList.remove("hidden");
+    document.getElementById("userBar").classList.add("hidden");
+    document.getElementById("userBar").classList.remove("flex");
+    try {
+        const cfg = await (await _origFetch("/api/auth/config")).json();
+        document.getElementById("authInvite").classList.toggle("hidden", !cfg.invite_required || authMode !== "register");
+        document.getElementById("tabRegister").classList.toggle("hidden", !cfg.registration_open);
+    } catch (e) { /* ignore */ }
+    initLucide();
+}
+
+function setAuthMode(mode) {
+    authMode = mode;
+    const isLogin = mode === "login";
+    document.getElementById("tabLogin").className = `py-2 rounded-lg transition ${isLogin ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`;
+    document.getElementById("tabRegister").className = `py-2 rounded-lg transition ${!isLogin ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-white"}`;
+    document.getElementById("authSubmit").textContent = isLogin ? "Đăng nhập" : "Tạo tài khoản";
+    document.getElementById("authSubtitle").textContent = isLogin
+        ? "Đăng nhập để dùng kho riêng của bạn"
+        : "Tạo tài khoản mới (người đăng ký đầu tiên là quản trị viên)";
+    document.getElementById("authPassword").setAttribute("autocomplete", isLogin ? "current-password" : "new-password");
+    document.getElementById("authError").classList.add("hidden");
+    showAuthModal();
+}
+
+function setupAuthListeners() {
+    document.getElementById("tabLogin").addEventListener("click", () => setAuthMode("login"));
+    document.getElementById("tabRegister").addEventListener("click", () => setAuthMode("register"));
+
+    document.getElementById("authForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const errEl = document.getElementById("authError");
+        const btn = document.getElementById("authSubmit");
+        errEl.classList.add("hidden");
+        btn.disabled = true;
+        try {
+            const res = await _origFetch(`/api/auth/${authMode}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    email: document.getElementById("authEmail").value,
+                    password: document.getElementById("authPassword").value,
+                    invite_code: document.getElementById("authInvite").value || null
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                const detail = Array.isArray(data.detail) ? data.detail.map(d => d.msg).join("; ") : data.detail;
+                throw new Error(detail || "Không thể đăng nhập");
+            }
+            document.getElementById("authPassword").value = "";
+            onLoggedIn(data);
+        } catch (err) {
+            errEl.textContent = err.message;
+            errEl.classList.remove("hidden");
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    document.getElementById("btnLogout").addEventListener("click", async () => {
+        await _origFetch("/api/auth/logout", { method: "POST" });
+        currentUser = null;
+        document.getElementById("vaultsGrid").innerHTML = "";
+        document.getElementById("progressList").innerHTML = "";
+        document.getElementById("progressSection").classList.add("hidden");
+        Object.keys(taskCards).forEach(k => delete taskCards[k]);
+        setAuthMode("login");
+    });
+
+    // Admin panel
+    document.getElementById("btnOpenAdmin").addEventListener("click", openAdminPanel);
+    document.getElementById("adminBtnClose").addEventListener("click", () => document.getElementById("adminModal").classList.add("hidden"));
+    document.getElementById("adminModal").addEventListener("click", (e) => {
+        if (e.target.id === "adminModal") e.target.classList.add("hidden");
+    });
+    document.getElementById("adminBtnBack").addEventListener("click", showAdminUsers);
+}
+
+// ---------------- Admin panel ----------------
+async function openAdminPanel() {
+    document.getElementById("adminModal").classList.remove("hidden");
+    showAdminUsers();
+    try {
+        const ov = await (await fetch("/api/admin/overview")).json();
+        document.getElementById("adminOverview").innerHTML = [
+            ["Người dùng", ov.users], ["Kho", ov.vaults], ["File", ov.items], ["Dung lượng", formatBytes(ov.size_bytes)]
+        ].map(([label, val]) => `
+            <div class="bg-slate-800/60 rounded-xl px-3 py-2">
+                <div class="text-slate-400">${label}</div>
+                <div class="text-base font-bold text-white">${val}</div>
+            </div>`).join("");
+    } catch (e) { /* ignore */ }
+}
+
+async function showAdminUsers() {
+    document.getElementById("adminVaultsView").classList.add("hidden");
+    document.getElementById("adminUsersView").classList.remove("hidden");
+    const body = document.getElementById("adminUsersBody");
+    body.innerHTML = `<tr><td colspan="6" class="px-3 py-6 text-center text-slate-500">Đang tải...</td></tr>`;
+
+    const res = await fetch("/api/admin/users");
+    if (!res.ok) { body.innerHTML = ""; showToast("Không tải được danh sách người dùng", "error"); return; }
+    const users = await res.json();
+
+    body.innerHTML = "";
+    users.forEach(u => {
+        const tr = document.createElement("tr");
+        tr.className = u.is_disabled ? "opacity-50" : "";
+        const isSelf = currentUser && u.id === currentUser.id;
+        tr.innerHTML = `
+            <td class="px-3 py-2.5 text-slate-200">
+                ${escapeHtml(u.email)}
+                ${u.is_admin ? '<span class="ml-1 text-[10px] bg-violet-600/30 text-violet-200 px-1.5 py-0.5 rounded">Admin</span>' : ""}
+                ${u.is_disabled ? '<span class="ml-1 text-[10px] bg-rose-600/30 text-rose-200 px-1.5 py-0.5 rounded">Đã khóa</span>' : ""}
+            </td>
+            <td class="px-3 py-2.5 text-slate-300">${u.vault_count}</td>
+            <td class="px-3 py-2.5 text-slate-300">${u.item_count}</td>
+            <td class="px-3 py-2.5 text-slate-300">${formatBytes(u.size_bytes)}</td>
+            <td class="px-3 py-2.5 text-slate-400">${formatDate(u.created_at)}</td>
+            <td class="px-3 py-2.5 text-right whitespace-nowrap space-x-1">
+                <button class="btn-view px-2.5 py-1 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white">Xem kho</button>
+                ${isSelf ? "" : `
+                <button class="btn-toggle px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200">${u.is_disabled ? "Mở khóa" : "Khóa"}</button>
+                <button class="btn-del px-2.5 py-1 rounded-lg bg-rose-900/40 hover:bg-rose-900/60 text-rose-300">Xóa</button>`}
+            </td>`;
+        tr.querySelector(".btn-view").addEventListener("click", () => showAdminUserVaults(u));
+        const tg = tr.querySelector(".btn-toggle");
+        if (tg) tg.addEventListener("click", async () => {
+            const r = await fetch(`/api/admin/users/${u.id}/toggle-disabled`, { method: "POST" });
+            if (r.ok) showAdminUsers(); else showToast("Không thực hiện được", "error");
+        });
+        const del = tr.querySelector(".btn-del");
+        if (del) del.addEventListener("click", async () => {
+            if (!confirm(`Xóa tài khoản ${u.email} và TOÀN BỘ kho của họ? Không thể hoàn tác.`)) return;
+            const r = await fetch(`/api/admin/users/${u.id}`, { method: "DELETE" });
+            if (r.ok) { showToast("Đã xóa tài khoản", "success"); showAdminUsers(); } else showToast("Không xóa được", "error");
+        });
+        body.appendChild(tr);
+    });
+    initLucide();
+}
+
+async function showAdminUserVaults(user) {
+    document.getElementById("adminUsersView").classList.add("hidden");
+    document.getElementById("adminVaultsView").classList.remove("hidden");
+    document.getElementById("adminVaultsTitle").textContent = `Kho của ${user.email}`;
+    const grid = document.getElementById("adminVaultsGrid");
+    grid.innerHTML = `<p class="text-xs text-slate-500">Đang tải...</p>`;
+
+    const res = await fetch(`/api/admin/users/${user.id}/vaults`);
+    if (!res.ok) { grid.innerHTML = ""; showToast("Không tải được kho của người dùng", "error"); return; }
+    const vaults = await res.json();
+    grid.innerHTML = vaults.length ? "" : `<p class="text-xs text-slate-500 col-span-full">Người dùng này chưa có kho nào.</p>`;
+
+    vaults.forEach(v => {
+        const pConf = PLATFORM_CONFIG[v.platform] || PLATFORM_CONFIG.other;
+        const card = document.createElement("div");
+        card.className = "bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 space-y-2";
+        card.innerHTML = `
+            <div class="flex items-center justify-between">
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded uppercase border ${pConf.color}">${pConf.name}</span>
+                <span class="text-[10px] text-slate-500">${formatDate(v.created_at)}</span>
+            </div>
+            <h5 class="text-sm font-bold text-white truncate" title="${escapeHtml(v.custom_name)}">${escapeHtml(v.custom_name)}</h5>
+            <p class="text-[11px] text-slate-400 truncate" title="${escapeHtml(v.profile_url)}">${escapeHtml(v.profile_url)}</p>
+            <div class="flex items-center justify-between text-xs text-slate-300">
+                <span>${v.total_images || 0} ảnh • ${v.total_videos || 0} video</span>
+                <span>${formatBytes(v.total_size_bytes)}</span>
+            </div>
+            <div class="flex gap-2 pt-1">
+                <button class="btn-open flex-1 bg-indigo-600/90 hover:bg-indigo-600 text-white text-xs font-semibold py-1.5 rounded-lg">Xem thư viện</button>
+                <button class="btn-zip px-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-emerald-300 text-xs">ZIP</button>
+                <button class="btn-delete px-2.5 rounded-lg bg-rose-900/40 hover:bg-rose-900/60 text-rose-300 text-xs">Xóa</button>
+            </div>`;
+        card.querySelector(".btn-open").addEventListener("click", () => openGalleryModal(v.id));
+        card.querySelector(".btn-zip").addEventListener("click", () => triggerZipDownload(v.id));
+        card.querySelector(".btn-delete").addEventListener("click", async () => {
+            if (!confirm(`Xóa kho "${v.custom_name}" của ${user.email}?`)) return;
+            const r = await fetch(`/api/vaults/${v.id}`, { method: "DELETE" });
+            if (r.ok) { showToast("Đã xóa kho", "success"); showAdminUserVaults(user); } else showToast("Không xóa được", "error");
+        });
+        grid.appendChild(card);
+    });
+}
 
 function initLucide() {
     if (window.lucide) {

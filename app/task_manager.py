@@ -28,11 +28,14 @@ class TaskManager:
         self.subscribers: Dict[str, list[asyncio.Queue]] = {}
         # task_id -> task status cache
         self.tasks: Dict[str, Dict[str, Any]] = {}
+        # task_id -> owner user id (never sent to clients)
+        self.owners: Dict[str, int] = {}
         # Limit how many extraction jobs run at once so batch downloads don't hammer the platforms
         self.semaphore = asyncio.Semaphore(3)
 
-    def create_task(self) -> str:
+    def create_task(self, user_id: int) -> str:
         task_id = str(uuid.uuid4())
+        self.owners[task_id] = user_id
         self.tasks[task_id] = {
             "status": "pending",
             "progress": 0,
@@ -119,6 +122,7 @@ class TaskManager:
         self,
         task_id: str,
         vault_id: int,
+        user_id: int,
         url: str,
         custom_name: str,
         notes: Optional[str],
@@ -157,7 +161,8 @@ class TaskManager:
             })
 
             # 1. Extraction step
-            cookies_file = settings.COOKIES_FILE if settings.COOKIES_FILE.exists() else None
+            user_cookie = settings.COOKIES_DIR / f"user_{user_id}.txt"
+            cookies_file = user_cookie if user_cookie.exists() else None
             extracted_items = await extract_media_items(
                 url=url,
                 platform=platform,

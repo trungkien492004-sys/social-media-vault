@@ -9,6 +9,29 @@ class ExtractRequest(BaseModel):
     media_type: str = Field("all", pattern="^(all|image|video)$", description="Media format filter")
     max_items: Optional[int] = Field(30, ge=1, le=150, description="Maximum number of media items to download")
 
+class AuthRequest(BaseModel):
+    email: str = Field(..., max_length=255)
+    password: str = Field(..., min_length=1, max_length=200)
+    invite_code: Optional[str] = Field(None, max_length=100)
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    is_admin: bool
+
+    class Config:
+        from_attributes = True
+
+class AdminUserOut(BaseModel):
+    id: int
+    email: str
+    is_admin: bool
+    is_disabled: bool
+    created_at: datetime
+    vault_count: int = 0
+    item_count: int = 0
+    size_bytes: int = 0
+
 class BatchExtractRequest(BaseModel):
     urls: List[str] = Field(..., min_length=1, max_length=30, description="Many links, one task each")
     custom_name: Optional[str] = Field(None, max_length=100, description="Optional name prefix; auto-generated per link when empty")
@@ -43,6 +66,7 @@ class VaultOut(BaseModel):
     notes: Optional[str] = None
     media_type_filter: str
     folder_name: str
+    user_id: Optional[int] = None
     status: str
     error_message: Optional[str] = None
     total_items: int

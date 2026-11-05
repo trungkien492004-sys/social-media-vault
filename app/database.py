@@ -35,7 +35,12 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     # Lightweight migration: add columns introduced after the first release
     from sqlalchemy import inspect, text
-    cols = {c["name"] for c in inspect(engine).get_columns("media_items")}
+    insp = inspect(engine)
+    cols = {c["name"] for c in insp.get_columns("media_items")}
     if "file_url" not in cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE media_items ADD COLUMN file_url VARCHAR(1000)"))
+    vault_cols = {c["name"] for c in insp.get_columns("vaults")}
+    if "user_id" not in vault_cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE vaults ADD COLUMN user_id INTEGER"))

@@ -8,7 +8,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Vault
+from sqlalchemy import func
+from app.auth import get_current_user
+from app.models import User, Vault
 from app.schemas import ExtractRequest, BatchExtractRequest, BatchTaskResponse, TaskResponse
 from app.task_manager import task_manager
 from app.extractor import detect_platform, sanitize_folder_name, normalize_url
@@ -39,8 +41,20 @@ def auto_name_from_url(url: str, platform: str) -> str:
         return platform
 
 
+def check_quota(db: Session, user: User) -> None:
+    if user.is_admin or settings.USER_QUOTA_MB <= 0:
+        return
+    used = db.query(func.coalesce(func.sum(Vault.total_size_bytes), 0)).filter(Vault.user_id == user.id).scalar() or 0
+    if used >= settings.USER_QUOTA_MB * 1024 * 1024:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Bạn đã dùng hết dung lượng {settings.USER_QUOTA_MB} MB. Hãy xóa bớt kho cũ trước khi tải thêm."
+        )
+
+
 def create_and_dispatch(
     db: Session,
+    user: User,
     url: str,
     custom_name: str,
     notes: Optional[str],
@@ -58,6 +72,7 @@ def create_and_dispatch(
         platform=platform,
         profile_url=url,
         notes=notes.strip() if notes else None,
+        user_id=user.id,
         media_type_filter=media_type,
         folder_name=dummy_folder,
         folder_path=str(settings.VAULT_DIR / dummy_folder),
@@ -73,12 +88,13 @@ def create_and_dispatch(
     vault.folder_path = str(settings.VAULT_DIR / folder_name)
     db.commit()
 
-    task_id = task_manager.create_task()
+    task_id = task_manager.create_task(user.id)
 
     asyncio.create_task(
         task_manager.run_extraction_task(
             task_id=task_id,
             vault_id=vault.id,
+            user_id=user.id,
             url=url,
             custom_name=custom_name,
             notes=notes,
@@ -96,12 +112,13 @@ def create_and_dispatch(
 
 
 @router.post("/start", response_model=TaskResponse)
-async def start_task(req: ExtractRequest, db: Session = Depends(get_db)):
-    return create_and_dispatch(db, req.url, req.custom_name, req.notes, req.media_type, req.max_items or 50)
+async def start_task(req: ExtractRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    check_quota(db, user)
+    return create_and_dispatch(db, user, req.url, req.custom_name, req.notes, req.media_type, req.max_items or 50)
 
 
 @router.post("/start-batch", response_model=BatchTaskResponse)
-async def start_batch(req: BatchExtractRequest, db: Session = Depends(get_db)):
+async def start_batch(req: BatchExtractRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """Start one extraction task per link (multi download). Tasks run up to 3 at a time."""
     urls: List[str] = []
     for raw in req.urls:
@@ -111,6 +128,7 @@ async def start_batch(req: BatchExtractRequest, db: Session = Depends(get_db)):
     if not urls:
         raise HTTPException(status_code=422, detail="Chưa có liên kết hợp lệ nào")
 
+    check_quota(db, user)
     base = (req.custom_name or "").strip()
     responses: List[TaskResponse] = []
     for idx, raw_url in enumerate(urls, start=1):
@@ -120,15 +138,18 @@ async def start_batch(req: BatchExtractRequest, db: Session = Depends(get_db)):
             name = f"{base} {idx}" if len(urls) > 1 else base
         else:
             name = auto_name_from_url(url, platform)
-        responses.append(create_and_dispatch(db, url, name, req.notes, req.media_type, req.max_items or 50))
+        responses.append(create_and_dispatch(db, user, url, name, req.notes, req.media_type, req.max_items or 50))
 
     return BatchTaskResponse(tasks=responses)
 
 
 @router.get("/stream-multi")
-async def stream_multiple_tasks(ids: str = Query(..., description="Comma separated task ids")):
+async def stream_multiple_tasks(
+    ids: str = Query(..., description="Comma separated task ids"),
+    user: User = Depends(get_current_user)
+):
     """Single SSE connection carrying events for many tasks (avoids the browser's per-host connection limit)."""
-    task_ids = [i for i in ids.split(",") if i]
+    task_ids = [i for i in ids.split(",") if i and task_manager.owners.get(i) == user.id]
     return StreamingResponse(
         task_manager.multi_event_generator(task_ids),
         headers=SSE_HEADERS,
@@ -137,11 +158,13 @@ async def stream_multiple_tasks(ids: str = Query(..., description="Comma separat
 
 
 @router.get("/{task_id}/stream")
-async def stream_task_events(task_id: str):
+async def stream_task_events(task_id: str, user: User = Depends(get_current_user)):
     """
     Server-Sent Events (SSE) endpoint to receive live download progress
     Native StreamingResponse with no-buffer headers for cloud proxies
     """
+    if task_manager.owners.get(task_id) != user.id:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thông tin task")
     return StreamingResponse(
         task_manager.event_generator(task_id),
         headers=SSE_HEADERS,
@@ -150,7 +173,7 @@ async def stream_task_events(task_id: str):
 
 
 @router.get("/{task_id}")
-async def get_task_status(task_id: str):
-    if task_id not in task_manager.tasks:
+async def get_task_status(task_id: str, user: User = Depends(get_current_user)):
+    if task_id not in task_manager.tasks or task_manager.owners.get(task_id) != user.id:
         raise HTTPException(status_code=404, detail="Không tìm thấy thông tin task")
     return task_manager.tasks[task_id]

@@ -185,3 +185,11 @@ Render Free xóa ổ đĩa khi ngủ/redeploy. Để không mất dữ liệu, d
 Cách hoạt động: ảnh/video được tải lên Supabase Storage ngay sau khi tải, link lưu trong database, bản trên đĩa bị xóa. `cookies.txt` được lưu trong database và tự khôi phục khi khởi động. Nếu không đặt các biến này, ứng dụng vẫn chạy như cũ (lưu trên đĩa, SQLite).
 
 Giới hạn: gói Free của Supabase cho mỗi file tối đa 50 MB và tổng 1 GB lưu trữ. File lớn hơn 50 MB chỉ nằm tạm trên đĩa Render.
+
+## Nhi?u ngu?i d�ng v� b?ng qu?n tr?
+
+- Ngu?i dang k� **d?u ti�n** l� qu?n tr? vi�n (admin). M?i ngu?i d�ng ch? th?y kho v� cookie c?a m�nh.
+- Admin c� n�t **Qu?n tr?**: xem danh s�ch ngu?i d�ng, xem/t?i/x�a kho c?a t?ng ngu?i, kh�a ho?c x�a t�i kho?n.
+- Bi?n m�i tru?ng t�y ch?n tr�n Render: `INVITE_CODE` (ch? ai c� m� m?i m?i dang k� du?c), `REGISTRATION_OPEN=false` (d�ng dang k�), `USER_QUOTA_MB` (gi?i h?n dung lu?ng m?i ngu?i, m?c d?nh 300, admin kh�ng b? gi?i h?n), `SECRET_KEY` (kh�a k� phi�n dang nh?p; kh�ng d?t th� t? sinh v� luu trong database).
+- Web ch?n Google l?p ch? m?c (robots.txt + noindex).
+

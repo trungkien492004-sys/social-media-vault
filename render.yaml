@@ -21,3 +21,8 @@ services:
         sync: false
       - key: SUPABASE_BUCKET
         value: vault
+      # Accounts (optional): INVITE_CODE limits who can sign up, USER_QUOTA_MB caps storage per user
+      - key: INVITE_CODE
+        sync: false
+      - key: USER_QUOTA_MB
+        value: 300

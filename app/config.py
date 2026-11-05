@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_KEY: str = ""
     SUPABASE_BUCKET: str = "vault"
 
+    # Per-user storage quota in MB (admins are exempt). 0 = unlimited.
+    USER_QUOTA_MB: int = int(os.getenv("USER_QUOTA_MB", "300"))
+
     # Extraction Limits & Rate Limiting
     MAX_ITEMS_PER_TASK: int = 100
     RATE_LIMIT_DELAY_MIN: float = 0.5

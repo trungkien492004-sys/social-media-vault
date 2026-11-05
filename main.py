@@ -2,7 +2,7 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -10,7 +10,7 @@ import uvicorn
 from app.config import settings
 from app.database import init_db
 from app import storage
-from app.routers import tasks, vaults, settings as settings_router
+from app.routers import tasks, vaults, settings as settings_router, auth as auth_router, admin as admin_router
 
 # Lifespan context manager
 @asynccontextmanager
@@ -42,6 +42,8 @@ app.add_middleware(
 )
 
 # Mount Routers
+app.include_router(auth_router.router)
+app.include_router(admin_router.router)
 app.include_router(tasks.router)
 app.include_router(vaults.router)
 app.include_router(settings_router.router)
@@ -55,6 +57,18 @@ if static_dir.exists():
 vault_dir = settings.VAULT_DIR
 vault_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/vault", StaticFiles(directory=str(vault_dir)), name="vault")
+
+@app.middleware("http")
+async def no_index_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    return response
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots():
+    return "User-agent: *\nDisallow: /\n"
+
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_index():
