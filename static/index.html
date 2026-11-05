@@ -138,7 +138,13 @@
                             ></textarea>
                             <span id="detectedPlatformBadge" class="absolute right-3 top-3 hidden text-[11px] font-semibold px-2.5 py-1 rounded-md uppercase tracking-wider"></span>
                         </div>
-                        <p id="linkCountHint" class="text-[11px] text-slate-500 mt-1">Mỗi dòng một link: hệ thống tải song song tối đa 3 link cùng lúc.</p>
+                        <div class="flex items-center justify-between mt-1">
+                            <p id="linkCountHint" class="text-[11px] text-slate-500">Mỗi dòng một link: hệ thống tải song song tối đa 3 link cùng lúc.</p>
+                            <button type="button" id="btnToggleHistory" class="flex items-center space-x-1 text-[11px] font-semibold text-indigo-300 hover:text-indigo-200">
+                                <i data-lucide="history" class="w-3.5 h-3.5"></i><span>Lịch sử link</span>
+                            </button>
+                        </div>
+                        <div id="historyPanel" class="hidden mt-2 rounded-xl border border-slate-800 bg-slate-900/80 max-h-64 overflow-y-auto divide-y divide-slate-800"></div>
                     </div>
 
                     <!-- Custom Name & Notes -->

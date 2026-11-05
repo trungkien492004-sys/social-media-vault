@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shutil
 import zipfile
@@ -11,7 +12,8 @@ from sqlalchemy import func, or_
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import User, Vault, MediaItem
-from app.schemas import VaultOut, VaultDetailOut
+from app.schemas import VaultOut, VaultDetailOut, TaskResponse
+from app.task_manager import task_manager
 from app.config import settings
 from app import storage
 import httpx
@@ -70,6 +72,83 @@ def list_vaults(
     
     vaults = query.order_by(Vault.created_at.desc()).offset(offset).limit(limit).all()
     return vaults
+
+@router.get("/history")
+def link_history(
+    limit: int = Query(40, ge=1, le=200),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Distinct links this user has submitted before (newest first), so they never have to search again."""
+    rows = (
+        db.query(Vault)
+        .filter(Vault.user_id == user.id)
+        .order_by(Vault.created_at.desc())
+        .limit(500)
+        .all()
+    )
+    seen = {}
+    for v in rows:
+        entry = seen.get(v.profile_url)
+        if entry is None:
+            seen[v.profile_url] = {
+                "url": v.profile_url,
+                "custom_name": v.custom_name,
+                "platform": v.platform,
+                "status": v.status,
+                "vault_id": v.id,
+                "last_at": v.created_at.isoformat(),
+                "times": 1,
+            }
+        else:
+            entry["times"] += 1
+    return list(seen.values())[:limit]
+
+
+@router.post("/{vault_id}/retry", response_model=TaskResponse)
+async def retry_vault(
+    vault_id: int,
+    max_items: int = Query(50, ge=1, le=150),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    """Run the extraction again for a vault that failed or got stuck. Previous partial files are cleared first."""
+    vault = get_owned_vault(db, vault_id, user)
+    if vault.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Chỉ chủ kho mới được tải lại")
+    if vault.id in task_manager.active_vaults:
+        raise HTTPException(status_code=409, detail="Kho này đang được xử lý, vui lòng đợi")
+
+    # Remove whatever the failed run left behind
+    vault_dir = settings.VAULT_DIR / vault.folder_name
+    if vault_dir.is_dir():
+        shutil.rmtree(vault_dir, ignore_errors=True)
+    if storage.enabled():
+        storage.delete_keys([m.file_path for m in vault.media_items if m.file_url])
+    for m in list(vault.media_items):
+        db.delete(m)
+
+    vault.status = "pending"
+    vault.error_message = None
+    vault.total_items = vault.total_images = vault.total_videos = 0
+    vault.total_size_bytes = 0
+    db.commit()
+
+    task_id = task_manager.create_task(user.id)
+    asyncio.create_task(
+        task_manager.run_extraction_task(
+            task_id=task_id,
+            vault_id=vault.id,
+            user_id=user.id,
+            url=vault.profile_url,
+            custom_name=vault.custom_name,
+            notes=vault.notes,
+            media_type=vault.media_type_filter or "all",
+            max_items=max_items
+        )
+    )
+    return TaskResponse(task_id=task_id, vault_id=vault.id, status="pending", message="Đã bắt đầu tải lại")
+
 
 @router.get("/{vault_id}", response_model=VaultDetailOut)
 def get_vault_detail(vault_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):

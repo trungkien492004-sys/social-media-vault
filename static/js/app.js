@@ -546,6 +546,9 @@ function createVaultCard(vault) {
                 </p>
             </div>
 
+            ${vault.status === "error" ? `<p class="text-[11px] text-rose-300 line-clamp-2">${escapeHtml(vault.error_message || "Tải lỗi")}</p>` : ""}
+            ${vault.status === "pending" || vault.status === "downloading" ? `<p class="text-[11px] text-amber-300">Chưa hoàn tất - bấm nút tải lại nếu bị treo</p>` : ""}
+
             <!-- Stats Bar -->
             <div class="flex items-center justify-between py-2.5 px-3 bg-slate-900/80 rounded-xl text-xs border border-slate-800">
                 <div class="flex items-center space-x-3 text-slate-300">
@@ -570,6 +573,10 @@ function createVaultCard(vault) {
                 <i data-lucide="layout-grid" class="w-3.5 h-3.5"></i>
                 <span>Xem Thư Viện</span>
             </button>
+            ${vault.status !== "completed" || !vault.total_items ? `
+            <button class="btn-retry-vault p-2 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 transition border border-amber-500/40" title="Tải lại">
+                <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+            </button>` : ""}
             <button class="btn-download-zip p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition border border-slate-700/60" title="Tải file .ZIP">
                 <i data-lucide="file-archive" class="w-4 h-4 text-emerald-400"></i>
             </button>
@@ -581,6 +588,8 @@ function createVaultCard(vault) {
 
     // Attach card action listeners
     card.querySelector(".btn-open-gallery").addEventListener("click", () => openGalleryModal(vault.id));
+    const retryBtn = card.querySelector(".btn-retry-vault");
+    if (retryBtn) retryBtn.addEventListener("click", () => retryVault(vault));
     card.querySelector(".btn-download-zip").addEventListener("click", () => triggerZipDownload(vault.id));
     card.querySelector(".btn-delete-vault").addEventListener("click", () => handleDeleteVault(vault.id, vault.custom_name));
 
@@ -604,6 +613,11 @@ async function handleExtractSubmit(e) {
 
     const btnSubmit = document.getElementById("btnSubmit");
     btnSubmit.disabled = true;
+
+    if (!(await confirmDuplicates(urls))) {
+        btnSubmit.disabled = false;
+        return;
+    }
 
     try {
         const res = await fetch("/api/tasks/start-batch", {
@@ -687,7 +701,7 @@ function startBatchStream(tasks, urls, customName) {
             : (urls[i] || `Tác vụ ${i + 1}`);
         const el = createProgressCard(t.task_id, label);
         list.prepend(el);
-        taskCards[t.task_id] = { el, done: false };
+        taskCards[t.task_id] = { el, done: false, vaultId: t.vault_id, label };
     });
     initLucide();
 
@@ -776,6 +790,16 @@ function updateProgressCard(data) {
         el.classList.remove("border-indigo-500/30");
         el.classList.add("border-rose-500/40");
         showToast(data.message || "Đã xảy ra lỗi khi cào media", "error");
+        if (card.vaultId && !el.querySelector(".task-retry")) {
+            const btn = document.createElement("button");
+            btn.className = "task-retry mt-1 inline-flex items-center space-x-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 transition";
+            btn.innerHTML = `<i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i><span>Tải lại</span>`;
+            btn.addEventListener("click", () => {
+                btn.disabled = true;
+                retryVault({ id: card.vaultId, custom_name: card.label });
+            });
+            el.appendChild(btn);
+        }
         loadVaults();
         initLucide();
     }
@@ -1121,4 +1145,99 @@ function showToast(message, type = "info") {
         toast.classList.add("opacity-0", "translate-y-2");
         setTimeout(() => toast.remove(), 300);
     }, 4000);
+}
+
+
+// ---------------- Retry a failed / stuck vault ----------------
+async function retryVault(vault) {
+    const maxItems = parseInt(document.getElementById("maxItemsSelect")?.value || "50", 10);
+    try {
+        const res = await fetch(`/api/vaults/${vault.id}/retry?max_items=${maxItems}`, { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || "Không thể tải lại");
+        showToast("Đang tải lại...", "info");
+        startBatchStream([data], [vault.custom_name], vault.custom_name);
+        loadVaults();
+    } catch (e) {
+        showToast(e.message, "error");
+    }
+}
+
+// ---------------- Link history ----------------
+let historyCache = [];
+
+async function loadHistory() {
+    const panel = document.getElementById("historyPanel");
+    panel.innerHTML = `<p class="px-3 py-3 text-xs text-slate-500">Đang tải...</p>`;
+    try {
+        const res = await fetch("/api/vaults/history");
+        if (!res.ok) throw new Error();
+        historyCache = await res.json();
+    } catch (e) {
+        panel.innerHTML = `<p class="px-3 py-3 text-xs text-rose-400">Không tải được lịch sử</p>`;
+        return;
+    }
+    renderHistory();
+}
+
+function renderHistory() {
+    const panel = document.getElementById("historyPanel");
+    if (!historyCache.length) {
+        panel.innerHTML = `<p class="px-3 py-3 text-xs text-slate-500">Chưa có link nào. Link bạn tải sẽ được lưu ở đây.</p>`;
+        return;
+    }
+    panel.innerHTML = "";
+    historyCache.forEach(h => {
+        const pConf = PLATFORM_CONFIG[h.platform] || PLATFORM_CONFIG.other;
+        const statusLabel = h.status === "completed" ? "" : (h.status === "error" ? "Lỗi" : "Chưa xong");
+        const row = document.createElement("div");
+        row.className = "flex items-center justify-between gap-2 px-3 py-2 hover:bg-slate-800/60";
+        row.innerHTML = `
+            <button type="button" class="hist-use min-w-0 flex-1 text-left" title="Điền link này vào ô nhập">
+                <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase border ${pConf.color}">${pConf.name}</span>
+                    <span class="text-xs font-semibold text-slate-200 truncate">${escapeHtml(h.custom_name)}</span>
+                    ${statusLabel ? `<span class="text-[10px] text-rose-300">${statusLabel}</span>` : ""}
+                </div>
+                <div class="text-[11px] text-slate-500 truncate">${escapeHtml(h.url)}</div>
+                <div class="text-[10px] text-slate-600">${formatDate(h.last_at)}${h.times > 1 ? ` • đã tải ${h.times} lần` : ""}</div>
+            </button>
+            <button type="button" class="hist-open shrink-0 text-[11px] px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300">Xem kho</button>`;
+        row.querySelector(".hist-use").addEventListener("click", () => {
+            const ta = document.getElementById("urlInput");
+            const lines = parseUrlLines(ta.value);
+            if (!lines.includes(h.url)) lines.push(h.url);
+            ta.value = lines.join("\n");
+            ta.dispatchEvent(new Event("input"));
+            if (!document.getElementById("customNameInput").value) {
+                document.getElementById("customNameInput").value = lines.length === 1 ? h.custom_name : "";
+            }
+            ta.focus();
+        });
+        row.querySelector(".hist-open").addEventListener("click", () => openGalleryModal(h.vault_id));
+        panel.appendChild(row);
+    });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("btnToggleHistory").addEventListener("click", () => {
+        const panel = document.getElementById("historyPanel");
+        const opening = panel.classList.contains("hidden");
+        panel.classList.toggle("hidden");
+        if (opening) loadHistory();
+    });
+});
+
+// Warn when submitting a link that was already downloaded before
+async function confirmDuplicates(urls) {
+    try {
+        const res = await fetch("/api/vaults/history");
+        if (!res.ok) return true;
+        const known = new Set((await res.json()).map(h => h.url.replace(/\/+$/, "")));
+        const dups = urls.filter(u => known.has(u.replace(/\/+$/, "")));
+        if (!dups.length) return true;
+        return confirm(`${dups.length} link đã từng được tải trước đây:\n\n${dups.slice(0, 5).join("\n")}\n\nVẫn tải lại (sẽ tạo thêm kho mới)?`);
+    } catch (e) {
+        return true;
+    }
 }

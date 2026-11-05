@@ -30,6 +30,8 @@ class TaskManager:
         self.tasks: Dict[str, Dict[str, Any]] = {}
         # task_id -> owner user id (never sent to clients)
         self.owners: Dict[str, int] = {}
+        # vault ids with a task that is queued or running (used to refuse duplicate retries)
+        self.active_vaults: set = set()
         # Limit how many extraction jobs run at once so batch downloads don't hammer the platforms
         self.semaphore = asyncio.Semaphore(3)
 
@@ -111,12 +113,18 @@ class TaskManager:
                     self.subscribers[tid].remove(queue)
 
     async def run_extraction_task(self, task_id: str, *args, **kwargs):
-        await self.broadcast_event(task_id, {
-            "status": "queued",
-            "message": "Đang chờ đến lượt xử lý..."
-        })
-        async with self.semaphore:
-            await self._run_extraction_task(task_id, *args, **kwargs)
+        vault_id = kwargs.get("vault_id")
+        self.active_vaults.add(vault_id)
+        try:
+            await self.broadcast_event(task_id, {
+                "status": "queued",
+                "message": "Đang chờ đến lượt xử lý...",
+                "vault_id": vault_id
+            })
+            async with self.semaphore:
+                await self._run_extraction_task(task_id, *args, **kwargs)
+        finally:
+            self.active_vaults.discard(vault_id)
 
     async def _run_extraction_task(
         self,
