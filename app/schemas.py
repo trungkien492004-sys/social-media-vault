@@ -9,6 +9,16 @@ class ExtractRequest(BaseModel):
     media_type: str = Field("all", pattern="^(all|image|video)$", description="Media format filter")
     max_items: Optional[int] = Field(30, ge=1, le=150, description="Maximum number of media items to download")
 
+class BatchExtractRequest(BaseModel):
+    urls: List[str] = Field(..., min_length=1, max_length=30, description="Many links, one task each")
+    custom_name: Optional[str] = Field(None, max_length=100, description="Optional name prefix; auto-generated per link when empty")
+    notes: Optional[str] = Field(None, max_length=500)
+    media_type: str = Field("all", pattern="^(all|image|video)$")
+    max_items: Optional[int] = Field(30, ge=1, le=150)
+
+class BatchTaskResponse(BaseModel):
+    tasks: List["TaskResponse"]
+
 class MediaItemOut(BaseModel):
     id: int
     vault_id: int

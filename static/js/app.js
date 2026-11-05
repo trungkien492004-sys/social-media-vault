@@ -78,6 +78,22 @@ const PLATFORM_CONFIG = {
     }
 };
 
+function escapeHtml(str) {
+    return String(str ?? "").replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+}
+
+// Split textarea content into a de-duplicated list of links (one per line / whitespace)
+function parseUrlLines(text) {
+    const seen = new Set();
+    return (text || "").split(/[\s,]+/).map(s => s.trim()).filter(s => {
+        if (!s || seen.has(s)) return false;
+        seen.add(s);
+        return true;
+    });
+}
+
 function detectPlatformFromUrl(url) {
     const lower = url.toLowerCase();
     if (lower.includes("tiktok.com")) return "tiktok";
@@ -95,7 +111,14 @@ function setupEventListeners() {
     const detectedBadge = document.getElementById("detectedPlatformBadge");
 
     urlInput.addEventListener("input", (e) => {
-        const val = e.target.value.trim();
+        const lines = parseUrlLines(e.target.value);
+        const val = lines[0] || "";
+        const hint = document.getElementById("linkCountHint");
+        if (hint) {
+            hint.textContent = lines.length > 1
+                ? `Đã nhận ${lines.length} link - sẽ tải song song tối đa 3 link cùng lúc.`
+                : "Mỗi dòng một link: hệ thống tải song song tối đa 3 link cùng lúc.";
+        }
         if (val.length > 5) {
             const platform = detectPlatformFromUrl(val);
             if (platform !== "other") {
@@ -174,6 +197,26 @@ function setupEventListeners() {
     document.getElementById("lightboxModal").addEventListener("click", (e) => {
         if (e.target.id === "lightboxModal") closeLightbox();
     });
+    document.getElementById("lightboxBtnPrev").addEventListener("click", () => stepLightbox(-1));
+    document.getElementById("lightboxBtnNext").addEventListener("click", () => stepLightbox(1));
+    document.addEventListener("keydown", (e) => {
+        const open = !document.getElementById("lightboxModal").classList.contains("hidden");
+        if (!open) return;
+        if (e.key === "ArrowLeft") stepLightbox(-1);
+        else if (e.key === "ArrowRight") stepLightbox(1);
+        else if (e.key === "Escape") closeLightbox();
+    });
+    // Swipe left/right on touch screens
+    let touchStartX = null;
+    const lbContent = document.getElementById("lightboxContent");
+    lbContent.addEventListener("touchstart", (e) => { touchStartX = e.changedTouches[0].clientX; }, { passive: true });
+    lbContent.addEventListener("touchend", (e) => {
+        if (touchStartX === null) return;
+        const dx = e.changedTouches[0].clientX - touchStartX;
+        touchStartX = null;
+        if (Math.abs(dx) > 60) stepLightbox(dx < 0 ? 1 : -1);
+    }, { passive: true });
+    document.getElementById("btnClearFinished").addEventListener("click", clearFinishedProgress);
 
     // 7. Settings Modal Events
     document.getElementById("btnOpenSettings").addEventListener("click", openSettingsModal);
@@ -263,11 +306,11 @@ function createVaultCard(vault) {
             </div>
 
             <div>
-                <h4 class="text-base font-bold text-white group-hover:text-indigo-400 transition truncate" title="${vault.custom_name}">
-                    ${vault.custom_name}
+                <h4 class="text-base font-bold text-white group-hover:text-indigo-400 transition truncate" title="${escapeHtml(vault.custom_name)}">
+                    ${escapeHtml(vault.custom_name)}
                 </h4>
                 <p class="text-xs text-slate-400 mt-1 line-clamp-2 min-h-[2rem]">
-                    ${vault.notes ? vault.notes : '<span class="italic text-slate-600">Không có ghi chú</span>'}
+                    ${vault.notes ? escapeHtml(vault.notes) : '<span class="italic text-slate-600">Không có ghi chú</span>'}
                 </p>
             </div>
 
@@ -312,39 +355,45 @@ function createVaultCard(vault) {
     return card;
 }
 
-// Handle Form Submit & Start Extraction
+// Handle Form Submit & Start Extraction (one or many links)
 async function handleExtractSubmit(e) {
     e.preventDefault();
 
-    const url = document.getElementById("urlInput").value.trim();
+    const urls = parseUrlLines(document.getElementById("urlInput").value);
     const customName = document.getElementById("customNameInput").value.trim();
     const notes = document.getElementById("notesInput").value.trim();
     const mediaType = document.querySelector('input[name="mediaType"]:checked').value;
     const maxItems = parseInt(document.getElementById("maxItemsSelect")?.value || "50", 10);
 
+    if (urls.length === 0) {
+        showToast("Vui lòng dán ít nhất một liên kết", "error");
+        return;
+    }
+
     const btnSubmit = document.getElementById("btnSubmit");
     btnSubmit.disabled = true;
 
     try {
-        const res = await fetch("/api/tasks/start", {
+        const res = await fetch("/api/tasks/start-batch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                url: url,
-                custom_name: customName,
-                notes: notes,
+                urls: urls,
+                custom_name: customName || null,
+                notes: notes || null,
                 media_type: mediaType,
                 max_items: maxItems
             })
         });
 
         if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.detail || "Không thể khởi tạo tác vụ");
+            const err = await res.json().catch(() => ({}));
+            const detail = Array.isArray(err.detail) ? err.detail.map(d => d.msg).join("; ") : err.detail;
+            throw new Error(detail || "Không thể khởi tạo tác vụ");
         }
 
-        const taskData = await res.json();
-        showToast("Bắt đầu trích xuất media...", "info");
+        const data = await res.json();
+        showToast(`Bắt đầu tải ${data.tasks.length} liên kết...`, "info");
 
         // Clear input form
         document.getElementById("urlInput").value = "";
@@ -352,9 +401,7 @@ async function handleExtractSubmit(e) {
         document.getElementById("notesInput").value = "";
         document.getElementById("detectedPlatformBadge").classList.add("hidden");
 
-        // Start SSE listener
-        startTaskStream(taskData.task_id, customName);
-
+        startBatchStream(data.tasks, urls, customName);
     } catch (err) {
         showToast(err.message, "error");
     } finally {
@@ -362,106 +409,156 @@ async function handleExtractSubmit(e) {
     }
 }
 
-// SSE Task Stream Listener
-function startTaskStream(taskId, customName) {
-    if (activeEventSource) {
-        activeEventSource.close();
-    }
+// ---- Progress cards (one per task) + a single multiplexed SSE connection ----
+const taskCards = {}; // task_id -> { el, done }
 
-    const progressSection = document.getElementById("progressSection");
-    const progressTitle = document.getElementById("progressTitle");
-    const progressMessage = document.getElementById("progressMessage");
-    const progressBar = document.getElementById("progressBar");
-    const progressPercentBadge = document.getElementById("progressPercentBadge");
-    const progressCountBadge = document.getElementById("progressCountBadge");
-    const progressSpinner = document.getElementById("progressSpinner");
-    const liveFeedContainer = document.getElementById("liveFeedContainer");
-    const liveFeedList = document.getElementById("liveFeedList");
+function createProgressCard(taskId, label) {
+    const el = document.createElement("div");
+    el.className = "glass-panel border border-indigo-500/30 rounded-2xl p-5 shadow-xl space-y-3";
+    el.innerHTML = `
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex items-center space-x-3 min-w-0">
+                <div class="task-spinner w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+                    <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+                </div>
+                <div class="min-w-0">
+                    <h4 class="task-title font-bold text-sm text-white truncate"></h4>
+                    <p class="task-message text-xs text-slate-400">Đang chờ đến lượt xử lý...</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-2 shrink-0">
+                <span class="task-count text-xs bg-slate-800 text-indigo-300 px-3 py-1 rounded-full font-medium border border-slate-700">0/0</span>
+                <span class="task-percent text-xs font-bold text-white bg-indigo-600 px-2.5 py-1 rounded-full">0%</span>
+            </div>
+        </div>
+        <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+            <div class="task-bar bg-gradient-to-r from-indigo-500 to-emerald-400 h-2 rounded-full transition-all duration-300" style="width:0%"></div>
+        </div>
+        <div class="task-feed hidden pt-2 border-t border-slate-800">
+            <div class="task-feed-list flex items-center space-x-2 overflow-x-auto pb-1"></div>
+        </div>
+    `;
+    el.querySelector(".task-title").textContent = label;
+    return el;
+}
 
-    progressSection.classList.remove("hidden");
-    liveFeedContainer.classList.add("hidden");
-    liveFeedList.innerHTML = "";
+function startBatchStream(tasks, urls, customName) {
+    // Previous batches keep their own stream open so they keep reporting progress
 
-    progressTitle.textContent = `Đang xử lý: ${customName}`;
-    progressMessage.textContent = "Đang kết nối đến máy chủ...";
-    progressBar.style.width = "5%";
-    progressPercentBadge.textContent = "5%";
-    progressCountBadge.textContent = "0/0";
-    progressSpinner.classList.add("animate-spin");
+    const section = document.getElementById("progressSection");
+    const list = document.getElementById("progressList");
+    section.classList.remove("hidden");
 
-    activeEventSource = new EventSource(`/api/tasks/${taskId}/stream`);
+    tasks.forEach((t, i) => {
+        const label = customName
+            ? (tasks.length > 1 ? `${customName} ${i + 1}` : customName)
+            : (urls[i] || `Tác vụ ${i + 1}`);
+        const el = createProgressCard(t.task_id, label);
+        list.prepend(el);
+        taskCards[t.task_id] = { el, done: false };
+    });
+    initLucide();
 
-    activeEventSource.onmessage = (event) => {
+    const ids = tasks.map(t => t.task_id).join(",");
+    const es = new EventSource(`/api/tasks/stream-multi?ids=${ids}`);
+    activeEventSource = es;
+
+    es.onmessage = (event) => {
+        let data;
         try {
-            const data = JSON.parse(event.data);
+            data = JSON.parse(event.data);
+        } catch (err) {
+            return;
+        }
 
-            if (data.message) {
-                progressMessage.textContent = data.message;
-            }
+        if (data.status === "batch_done") {
+            es.close();
+            loadStats();
+            loadVaults();
+            return;
+        }
+        updateProgressCard(data);
+    };
 
-            if (data.progress !== undefined) {
-                const percent = Math.min(100, Math.max(0, data.progress));
-                progressBar.style.width = `${percent}%`;
-                progressPercentBadge.textContent = `${percent}%`;
-            }
-
-            if (data.total > 0) {
-                progressCountBadge.textContent = `${data.current || 0}/${data.total}`;
-            }
-
-            // Handle latest downloaded thumbnail preview
-            if (data.latest_item) {
-                liveFeedContainer.classList.remove("hidden");
-                const item = data.latest_item;
-                const mini = document.createElement("div");
-                mini.className = "w-14 h-14 rounded-lg bg-slate-800 overflow-hidden shrink-0 border border-slate-700 relative flex items-center justify-center";
-
-                if (item.file_type === "image") {
-                    mini.innerHTML = `<img src="/vault/${item.file_path}" class="w-full h-full object-cover" />`;
-                } else {
-                    mini.innerHTML = `
-                        <video src="/vault/${item.file_path}" class="w-full h-full object-cover"></video>
-                        <div class="absolute inset-0 bg-black/40 flex items-center justify-center">
-                            <i data-lucide="play" class="w-4 h-4 text-white"></i>
-                        </div>
-                    `;
-                }
-                liveFeedList.prepend(mini);
-                initLucide();
-            }
-
-            // Handle Task Completion
-            if (data.status === "completed") {
-                progressSpinner.classList.remove("animate-spin");
-                progressSpinner.innerHTML = `<i data-lucide="check-circle" class="w-5 h-5 text-emerald-400"></i>`;
-                progressBar.classList.remove("from-indigo-500");
-                progressBar.classList.add("from-emerald-500", "to-teal-400");
-                showToast("Đã trích xuất & lưu trữ thành công!", "success");
-
-                loadStats();
-                loadVaults();
-                initLucide();
-                activeEventSource.close();
-            }
-
-            // Handle Task Error
-            if (data.status === "error") {
-                progressSpinner.classList.remove("animate-spin");
-                progressSpinner.innerHTML = `<i data-lucide="alert-circle" class="w-5 h-5 text-rose-400"></i>`;
-                progressBar.classList.add("bg-rose-600");
-                showToast(data.message || "Đã xảy ra lỗi khi cào media", "error");
-                initLucide();
-                activeEventSource.close();
-            }
-        } catch (e) {
-            console.error("Lỗi phân tích SSE:", e);
+    es.onerror = () => {
+        // Server closes the stream when everything is finished; just stop retrying.
+        es.close();
+        const pending = Object.values(taskCards).some(c => !c.done);
+        if (pending) {
+            showToast("Mất kết nối theo dõi tiến trình. Tải lại danh sách kho để xem kết quả.", "error");
+            loadVaults();
         }
     };
+}
 
-    activeEventSource.onerror = (err) => {
-        console.warn("SSE connection error or closed");
-        activeEventSource.close();
-    };
+function updateProgressCard(data) {
+    const card = taskCards[data.task_id];
+    if (!card) return;
+    const el = card.el;
+
+    if (data.message) el.querySelector(".task-message").textContent = data.message;
+
+    if (data.progress !== undefined) {
+        const percent = Math.min(100, Math.max(0, data.progress));
+        el.querySelector(".task-bar").style.width = `${percent}%`;
+        el.querySelector(".task-percent").textContent = `${percent}%`;
+    }
+
+    if (data.total > 0) {
+        el.querySelector(".task-count").textContent = `${data.current || 0}/${data.total}`;
+    }
+
+    if (data.latest_item) {
+        const item = data.latest_item;
+        const feed = el.querySelector(".task-feed");
+        feed.classList.remove("hidden");
+        const mini = document.createElement("div");
+        mini.className = "w-14 h-14 rounded-lg bg-slate-800 overflow-hidden shrink-0 border border-slate-700 relative flex items-center justify-center";
+        const src = `/vault/${encodeURI(item.file_path)}`;
+        if (item.file_type === "image") {
+            mini.innerHTML = `<img src="${src}" class="w-full h-full object-cover" />`;
+        } else {
+            mini.innerHTML = `
+                <video src="${src}#t=0.1" preload="metadata" muted class="w-full h-full object-cover"></video>
+                <div class="absolute inset-0 bg-black/40 flex items-center justify-center">
+                    <i data-lucide="play" class="w-4 h-4 text-white"></i>
+                </div>`;
+        }
+        el.querySelector(".task-feed-list").prepend(mini);
+        initLucide();
+    }
+
+    if (data.status === "completed") {
+        card.done = true;
+        el.querySelector(".task-spinner").innerHTML = `<i data-lucide="check-circle" class="w-5 h-5 text-emerald-400"></i>`;
+        el.classList.remove("border-indigo-500/30");
+        el.classList.add("border-emerald-500/40");
+        showToast(data.message || "Đã trích xuất & lưu trữ thành công!", "success");
+        loadStats();
+        loadVaults();
+        initLucide();
+    } else if (data.status === "error") {
+        card.done = true;
+        el.querySelector(".task-spinner").innerHTML = `<i data-lucide="alert-circle" class="w-5 h-5 text-rose-400"></i>`;
+        el.querySelector(".task-bar").className = "task-bar bg-rose-600 h-2 rounded-full";
+        el.classList.remove("border-indigo-500/30");
+        el.classList.add("border-rose-500/40");
+        showToast(data.message || "Đã xảy ra lỗi khi cào media", "error");
+        loadVaults();
+        initLucide();
+    }
+}
+
+function clearFinishedProgress() {
+    Object.entries(taskCards).forEach(([id, c]) => {
+        if (c.done) {
+            c.el.remove();
+            delete taskCards[id];
+        }
+    });
+    if (Object.keys(taskCards).length === 0) {
+        document.getElementById("progressSection").classList.add("hidden");
+    }
 }
 
 // Open Gallery Modal
@@ -534,19 +631,19 @@ function renderModalMedia() {
         const itemEl = document.createElement("div");
         itemEl.className = "group relative aspect-square rounded-xl bg-slate-800/80 overflow-hidden border border-slate-700/60 cursor-pointer shadow hover:border-indigo-500 transition";
 
-        const filePath = `/vault/${item.file_path}`;
+        const filePath = `/vault/${encodeURI(item.file_path)}`;
 
         if (item.file_type === "image") {
             itemEl.innerHTML = `
                 <img src="${filePath}" loading="lazy" class="w-full h-full object-cover group-hover:scale-105 transition duration-300" />
                 <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent opacity-0 group-hover:opacity-100 transition p-2.5 flex flex-col justify-between">
                     <span class="self-end text-[10px] bg-indigo-600/90 text-white font-semibold px-2 py-0.5 rounded">Ảnh</span>
-                    <p class="text-[11px] text-white truncate">${item.caption || item.file_name}</p>
+                    <p class="text-[11px] text-white truncate">${escapeHtml(item.caption || item.file_name)}</p>
                 </div>
             `;
         } else {
             itemEl.innerHTML = `
-                <video src="${filePath}" preload="metadata" class="w-full h-full object-cover"></video>
+                <video src="${filePath}#t=0.1" preload="metadata" muted class="w-full h-full object-cover"></video>
                 <div class="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/50 transition">
                     <div class="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white group-hover:scale-110 transition">
                         <i data-lucide="play" class="w-5 h-5 fill-white"></i>
@@ -559,46 +656,80 @@ function renderModalMedia() {
             `;
         }
 
-        itemEl.addEventListener("click", () => openLightbox(item));
+        itemEl.addEventListener("click", () => openLightbox(item, items));
         grid.appendChild(itemEl);
     });
 
     initLucide();
 }
 
-// Lightbox Preview (HD Photo or Video Player)
-function openLightbox(item) {
-    const modal = document.getElementById("lightboxModal");
+// Lightbox Preview (HD Photo or Video Player) with prev/next browsing like a collection
+let lightboxItems = [];
+let lightboxIndex = 0;
+
+function openLightbox(item, items) {
+    lightboxItems = items && items.length ? items : [item];
+    lightboxIndex = Math.max(0, lightboxItems.findIndex(i => i.id === item.id));
+    renderLightbox();
+    document.getElementById("lightboxModal").classList.remove("hidden");
+}
+
+function stepLightbox(delta) {
+    if (lightboxItems.length < 2) return;
+    lightboxIndex = (lightboxIndex + delta + lightboxItems.length) % lightboxItems.length;
+    renderLightbox();
+}
+
+function renderLightbox() {
+    const item = lightboxItems[lightboxIndex];
+    if (!item) return;
+
     const container = document.getElementById("lightboxContent");
     const captionEl = document.getElementById("lightboxCaption");
     const btnDownload = document.getElementById("lightboxBtnDownload");
+    const counter = document.getElementById("lightboxCounter");
+    const filePath = `/vault/${encodeURI(item.file_path)}`;
 
-    const filePath = `/vault/${item.file_path}`;
+    // Stop any previous video before replacing the content
+    const prev = container.querySelector("video");
+    if (prev) { prev.pause(); prev.removeAttribute("src"); prev.load(); }
 
     captionEl.textContent = item.caption || item.file_name;
     btnDownload.href = filePath;
     btnDownload.setAttribute("download", item.file_name);
+    counter.textContent = `${lightboxIndex + 1} / ${lightboxItems.length}`;
+
+    const multi = lightboxItems.length > 1;
+    document.getElementById("lightboxBtnPrev").classList.toggle("hidden", !multi);
+    document.getElementById("lightboxBtnNext").classList.toggle("hidden", !multi);
 
     if (item.file_type === "image") {
         container.innerHTML = `<img src="${filePath}" class="max-h-[75vh] w-auto max-w-full rounded-lg object-contain shadow-2xl" />`;
     } else {
         container.innerHTML = `
-            <video src="${filePath}" controls autoplay class="max-h-[75vh] w-auto max-w-full rounded-lg shadow-2xl">
+            <video src="${filePath}" controls autoplay playsinline class="max-h-[75vh] w-auto max-w-full rounded-lg shadow-2xl">
                 Trình duyệt của bạn không hỗ trợ thẻ video.
-            </video>
-        `;
+            </video>`;
+        const video = container.querySelector("video");
+        video.addEventListener("ended", () => {
+            if (document.getElementById("lightboxAutoNext").checked && lightboxItems.length > 1) {
+                stepLightbox(1);
+            }
+        });
+        // Autoplay with sound may be blocked after auto-advance; fall back to muted playback
+        const p = video.play();
+        if (p && p.catch) {
+            p.catch(() => { video.muted = true; video.play().catch(() => {}); });
+        }
     }
-
-    modal.classList.remove("hidden");
     initLucide();
 }
 
 function closeLightbox() {
     const modal = document.getElementById("lightboxModal");
     const container = document.getElementById("lightboxContent");
-    // Stop video playing if open
     const video = container.querySelector("video");
-    if (video) video.pause();
+    if (video) { video.pause(); video.removeAttribute("src"); video.load(); }
     container.innerHTML = "";
     modal.classList.add("hidden");
 }
@@ -742,7 +873,7 @@ function showToast(message, type = "info") {
     toast.className = `flex items-center space-x-2.5 px-4 py-3 rounded-xl border shadow-xl text-xs font-medium pointer-events-auto transition transform translate-y-2 opacity-0 ${bg}`;
     toast.innerHTML = `
         <i data-lucide="${icon}" class="w-4 h-4 shrink-0"></i>
-        <span>${message}</span>
+        <span>${escapeHtml(message)}</span>
     `;
 
     container.appendChild(toast);

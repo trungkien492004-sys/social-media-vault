@@ -27,6 +27,8 @@ class TaskManager:
         self.subscribers: Dict[str, list[asyncio.Queue]] = {}
         # task_id -> task status cache
         self.tasks: Dict[str, Dict[str, Any]] = {}
+        # Limit how many extraction jobs run at once so batch downloads don't hammer the platforms
+        self.semaphore = asyncio.Semaphore(3)
 
     def create_task(self) -> str:
         task_id = str(uuid.uuid4())
@@ -42,6 +44,7 @@ class TaskManager:
         return task_id
 
     async def broadcast_event(self, task_id: str, data: Dict[str, Any]):
+        data = {**data, "task_id": task_id}
         if task_id in self.tasks:
             self.tasks[task_id].update(data)
         
@@ -72,7 +75,46 @@ class TaskManager:
             if task_id in self.subscribers and queue in self.subscribers[task_id]:
                 self.subscribers[task_id].remove(queue)
 
-    async def run_extraction_task(
+    async def multi_event_generator(self, task_ids: list) -> AsyncGenerator[str, None]:
+        """One SSE connection that multiplexes events of several tasks (batch download)."""
+        queue = asyncio.Queue()
+        active = set()
+        for tid in task_ids:
+            if tid not in self.tasks:
+                continue
+            self.subscribers.setdefault(tid, []).append(queue)
+            state = {**self.tasks[tid], "task_id": tid}
+            yield f"data: {json.dumps(state, ensure_ascii=False)}\n\n"
+            if state.get("status") not in ("completed", "error"):
+                active.add(tid)
+
+        try:
+            while active:
+                try:
+                    data = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                if data.get("status") in ("completed", "error"):
+                    active.discard(data.get("task_id"))
+            yield f"data: {json.dumps({'status': 'batch_done'})}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            for tid in task_ids:
+                if tid in self.subscribers and queue in self.subscribers[tid]:
+                    self.subscribers[tid].remove(queue)
+
+    async def run_extraction_task(self, task_id: str, *args, **kwargs):
+        await self.broadcast_event(task_id, {
+            "status": "queued",
+            "message": "Đang chờ đến lượt xử lý..."
+        })
+        async with self.semaphore:
+            await self._run_extraction_task(task_id, *args, **kwargs)
+
+    async def _run_extraction_task(
         self,
         task_id: str,
         vault_id: int,
@@ -83,6 +125,7 @@ class TaskManager:
         max_items: int = 50
     ):
         db: Session = SessionLocal()
+        vault = None
         try:
             vault = db.query(Vault).filter(Vault.id == vault_id).first()
             if not vault:

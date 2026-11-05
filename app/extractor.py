@@ -6,6 +6,8 @@ import unicodedata
 import subprocess
 import asyncio
 import logging
+import shutil
+import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import httpx
@@ -23,7 +25,10 @@ class ExtractedItem:
         file_extension: str,
         caption: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
-        original_url: Optional[str] = None
+        original_url: Optional[str] = None,
+        needs_ytdlp: bool = False,
+        headers: Optional[Dict[str, str]] = None,
+        cookies_path: Optional[Path] = None
     ):
         self.file_type = file_type  # "image" or "video"
         self.download_url = download_url
@@ -31,6 +36,10 @@ class ExtractedItem:
         self.caption = caption or ""
         self.thumbnail_url = thumbnail_url
         self.original_url = original_url or ""
+        # True when the media is a split/HLS stream that only yt-dlp can fetch correctly
+        self.needs_ytdlp = needs_ytdlp
+        self.headers = headers or {}
+        self.cookies_path = cookies_path
 
 def normalize_url(url: str) -> str:
     url = url.strip()
@@ -80,9 +89,16 @@ async def extract_single_tiktok_tikwm(client: httpx.AsyncClient, url: str) -> Li
     }
 
     try:
-        resp = await client.post(api_url, data={"url": url, "hd": 1}, headers=headers)
-        if resp.status_code == 200:
-            data = resp.json()
+        data = {}
+        for attempt in range(4):
+            resp = await client.post(api_url, data={"url": url, "hd": 1}, headers=headers)
+            data = resp.json() if resp.status_code == 200 else {}
+            # TikWM free tier allows ~1 request/second: back off and retry
+            if data.get("code") != 0 and "limit" in str(data.get("msg", "")).lower():
+                await asyncio.sleep(1.3 + attempt)
+                continue
+            break
+        if data:
             if data.get("code") == 0 and "data" in data:
                 item_data = data["data"]
                 caption = item_data.get("title", "")
@@ -131,7 +147,7 @@ def get_tiktok_profile_posts_sync(profile_url: str, max_count: int = 15) -> List
 
     cmd = [sys.executable, "-m", "gallery_dl", "-s", "--range", f"1-{max_count}", clean]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
         output = proc.stdout + "\n" + proc.stderr
         urls = list(dict.fromkeys(re.findall(r'https?://(?:www\.)?tiktok\.com/@[^/]+/video/\d+', output)))
         return urls[:max_count]
@@ -260,7 +276,7 @@ async def extract_tiktok_media(url: str, cookies_path: Optional[Path] = None, ma
                     post_items = await extract_single_tiktok_tikwm(client, p_url)
                     if post_items:
                         items.extend(post_items)
-                    await asyncio.sleep(0.4)
+                    await asyncio.sleep(1.1)
 
                 if items:
                     return items
@@ -279,29 +295,39 @@ async def extract_tiktok_media(url: str, cookies_path: Optional[Path] = None, ma
 
     return items
 
-def extract_with_ytdlp(url: str, cookies_file: Optional[Path] = None, max_items: int = 25) -> List[ExtractedItem]:
-    """
-    Universal extraction using yt-dlp with cookies.txt support
-    """
-    items: List[ExtractedItem] = []
+HAS_FFMPEG = shutil.which("ffmpeg") is not None
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "gif", "heic"}
+VIDEO_EXTS = {"mp4", "mov", "m4v", "webm", "mkv"}
 
-    ydl_opts: Dict[str, Any] = {
-        'extract_flat': False,
-        'skip_download': True,
+def _ytdlp_format() -> str:
+    # With ffmpeg we can merge best video + best audio; without it only single-file formats play correctly.
+    if HAS_FFMPEG:
+        return "bv*+ba/b"
+    return "b[ext=mp4]/b"
+
+def _ytdlp_base_opts(cookies_file: Optional[Path]) -> Dict[str, Any]:
+    opts: Dict[str, Any] = {
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
-        'playlist_items': f'1-{max_items}',
-        'format': 'bestvideo+bestaudio/best',
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
-        }
+        'format': _ytdlp_format(),
+        'http_headers': {'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8'},
     }
-
+    if HAS_FFMPEG:
+        opts['merge_output_format'] = 'mp4'
     if cookies_file and cookies_file.exists() and cookies_file.stat().st_size > 0:
-        ydl_opts['cookiefile'] = str(cookies_file)
-        logger.info(f"Using cookies file: {cookies_file}")
+        opts['cookiefile'] = str(cookies_file)
+    return opts
+
+def extract_with_ytdlp(url: str, cookies_file: Optional[Path] = None, max_items: int = 25) -> List[ExtractedItem]:
+    """
+    Universal extraction using yt-dlp with cookies.txt support.
+    Split (video+audio) or HLS streams are flagged needs_ytdlp so they are downloaded by yt-dlp itself.
+    """
+    items: List[ExtractedItem] = []
+    ydl_opts = _ytdlp_base_opts(cookies_file)
+    ydl_opts.update({'extract_flat': False, 'skip_download': True, 'playlist_items': f'1-{max_items}'})
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -309,45 +335,117 @@ def extract_with_ytdlp(url: str, cookies_file: Optional[Path] = None, max_items:
             if not info:
                 return items
 
-            entries = []
-            if 'entries' in info and info['entries']:
-                entries = [e for e in info['entries'] if e]
-            else:
-                entries = [info]
+            entries = [e for e in info['entries'] if e] if info.get('entries') else [info]
 
             for entry in entries:
                 caption = entry.get('title') or entry.get('description') or ""
                 thumbnail = entry.get('thumbnail')
                 entry_url = entry.get('webpage_url') or url
                 direct_url = entry.get('url')
-                ext = entry.get('ext') or 'mp4'
+                ext = (entry.get('ext') or 'mp4').lower()
+                protocol = entry.get('protocol') or ''
+                split = bool(entry.get('requested_formats')) and len(entry['requested_formats']) > 1
+                needs_ytdlp = split or protocol.startswith('m3u8') or 'dash' in protocol or ext == 'm3u8'
+                # TikTok CDN links reject plain HTTP clients (403); yt-dlp downloads them with the right session
+                if 'tiktok.com' in entry_url:
+                    needs_ytdlp = True
 
-                if ext in ['jpg', 'jpeg', 'png', 'webp']:
-                    file_type = "image"
-                else:
-                    file_type = "video"
+                if not direct_url and entry.get('requested_formats'):
+                    direct_url = entry['requested_formats'][0].get('url')
+                if not direct_url and entry.get('formats'):
+                    valid = [f for f in entry['formats'] if f.get('url')]
+                    if valid:
+                        direct_url = valid[-1]['url']
+                        ext = (valid[-1].get('ext') or ext).lower()
+                if not direct_url:
+                    continue
 
-                if not direct_url and 'formats' in entry and entry['formats']:
-                    valid_formats = [f for f in entry['formats'] if f.get('url')]
-                    if valid_formats:
-                        best = valid_formats[-1]
-                        direct_url = best.get('url')
-                        if best.get('ext'):
-                            ext = best.get('ext')
+                file_type = "image" if ext in IMAGE_EXTS else "video"
+                if file_type == "video" and (ext not in VIDEO_EXTS or needs_ytdlp):
+                    ext = "mp4"
 
-                if direct_url:
-                    items.append(ExtractedItem(
-                        file_type=file_type,
-                        download_url=direct_url,
-                        file_extension=ext,
-                        caption=caption[:300] if caption else "",
-                        thumbnail_url=thumbnail,
-                        original_url=entry_url
-                    ))
+                items.append(ExtractedItem(
+                    file_type=file_type,
+                    download_url=entry_url if needs_ytdlp else direct_url,
+                    file_extension=ext,
+                    caption=caption[:300] if caption else "",
+                    thumbnail_url=thumbnail,
+                    original_url=entry_url,
+                    needs_ytdlp=needs_ytdlp,
+                    headers=entry.get('http_headers') or {},
+                    cookies_path=cookies_file
+                ))
     except Exception as e:
         logger.error(f"yt-dlp extraction error for {url}: {e}")
 
     return items
+
+def extract_with_gallerydl(url: str, cookies_file: Optional[Path] = None, max_items: int = 25) -> List[ExtractedItem]:
+    """
+    Fallback for pages yt-dlp cannot handle (Facebook photos/albums/profiles, Instagram profiles,
+    Threads posts...). gallery-dl prints direct CDN URLs with -g.
+    """
+    cmd = [sys.executable, "-m", "gallery_dl", "-g", "--range", f"1-{max_items}"]
+    if cookies_file and cookies_file.exists() and cookies_file.stat().st_size > 0:
+        cmd += ["--cookies", str(cookies_file)]
+    cmd.append(url)
+
+    items: List[ExtractedItem] = []
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180, encoding="utf-8", errors="replace", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+    except Exception as e:
+        logger.error(f"gallery-dl error for {url}: {e}")
+        return items
+
+    if proc.returncode != 0 and not proc.stdout.strip():
+        logger.warning(f"gallery-dl returned {proc.returncode}: {proc.stderr[-300:]}")
+
+    seen = set()
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("| "):  # URL delegated to youtube-dl; the yt-dlp pass handles those
+            continue
+        if not line.startswith("http") or line in seen:
+            continue
+        seen.add(line)
+        path = line.split("?")[0].lower()
+        last = path.rsplit("/", 1)[-1]
+        ext = last.rsplit(".", 1)[-1] if "." in last else ""
+        if ext in VIDEO_EXTS:
+            ftype = "video"
+        else:
+            ftype, ext = "image", (ext if ext in IMAGE_EXTS else "jpg")
+        items.append(ExtractedItem(
+            file_type=ftype,
+            download_url=line,
+            file_extension=ext,
+            caption="",
+            thumbnail_url=line if ftype == "image" else None,
+            original_url=url
+        ))
+        if len(items) >= max_items:
+            break
+    return items
+
+def download_with_ytdlp_sync(item: ExtractedItem, target_stem: Path) -> Optional[Path]:
+    """Download a split/HLS stream with yt-dlp (merging with ffmpeg when available)."""
+    opts = _ytdlp_base_opts(item.cookies_path)
+    opts.update({'outtmpl': str(target_stem) + '.%(ext)s', 'noplaylist': True, 'retries': 3})
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(item.download_url, download=True)
+            if info and info.get('entries'):
+                info = next((e for e in info['entries'] if e), None)
+            if info:
+                fp = (info.get('requested_downloads') or [{}])[0].get('filepath') or ydl.prepare_filename(info)
+                if fp and Path(fp).exists():
+                    return Path(fp)
+    except Exception as e:
+        logger.error(f"yt-dlp download error for {item.download_url}: {e}")
+    for cand in target_stem.parent.glob(target_stem.name + ".*"):
+        if cand.suffix not in (".part", ".ytdl"):
+            return cand
+    return None
 
 async def extract_media_items(
     url: str,
@@ -380,7 +478,12 @@ async def extract_media_items(
             max_items
         )
 
-    # 3. Filter by user preference: "all", "image", "video"
+    # 3b. gallery-dl fallback (Facebook photos/albums/profiles, Instagram/Threads profiles & posts)
+    if not items and platform in ("facebook", "instagram", "threads", "other"):
+        loop = asyncio.get_event_loop()
+        items = await loop.run_in_executor(None, extract_with_gallerydl, url, cookies_path, max_items)
+
+    # 4. Filter by user preference: "all", "image", "video"
     if media_filter == "image":
         items = [item for item in items if item.file_type == "image"]
     elif media_filter == "video":
@@ -398,35 +501,43 @@ async def download_file(
     Download a single media item with rate-limit safety & proper headers
     """
     ext = item.file_extension if item.file_extension else ("mp4" if item.file_type == "video" else "jpg")
-    file_name = f"{item_index:03d}_{item.file_type}_{int(time.time())}_{random.randint(100, 999)}.{ext}"
-    target_path = destination_folder / file_name
+    stem = f"{item_index:03d}_{item.file_type}_{int(time.time())}_{random.randint(100, 999)}"
+    target_path = destination_folder / f"{stem}.{ext}"
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Referer": item.original_url or "https://www.google.com/"
-    }
+    def build_result(path: Path) -> Dict[str, Any]:
+        return {
+            "file_type": item.file_type,
+            "file_name": path.name,
+            "file_path": f"{destination_folder.name}/{path.name}",
+            "file_size": path.stat().st_size,
+            "original_url": item.original_url,
+            "caption": item.caption,
+            "thumbnail_url": item.thumbnail_url
+        }
+
+    # Split / HLS streams: let yt-dlp download (and merge) them
+    if item.needs_ytdlp:
+        loop = asyncio.get_event_loop()
+        out = await loop.run_in_executor(None, download_with_ytdlp_sync, item, destination_folder / stem)
+        if out and out.exists() and out.stat().st_size > 0:
+            return build_result(out)
+        logger.warning(f"yt-dlp download failed for {item.download_url}")
+        return None
+
+    headers = {"User-Agent": UA, "Referer": item.original_url or "https://www.google.com/"}
+    headers.update({k: v for k, v in item.headers.items() if k.lower() != "accept-encoding"})
 
     try:
-        # Shorter, smoother delay (0.3s - 0.8s) for faster completion
-        await asyncio.sleep(random.uniform(0.3, 0.8))
+        await asyncio.sleep(random.uniform(0.2, 0.5))
 
         async with client.stream("GET", item.download_url, headers=headers, follow_redirects=True, timeout=60.0) as resp:
             if resp.status_code == 200:
-                total_bytes = 0
                 with open(target_path, "wb") as f:
                     async for chunk in resp.aiter_bytes(chunk_size=1024 * 64):
                         f.write(chunk)
-                        total_bytes += len(chunk)
-
-                return {
-                    "file_type": item.file_type,
-                    "file_name": file_name,
-                    "file_path": f"{destination_folder.name}/{file_name}",
-                    "file_size": total_bytes,
-                    "original_url": item.original_url,
-                    "caption": item.caption,
-                    "thumbnail_url": item.thumbnail_url
-                }
+                if target_path.stat().st_size > 0:
+                    return build_result(target_path)
+                target_path.unlink()
             else:
                 logger.warning(f"Download failed with status {resp.status_code} for {item.download_url}")
     except Exception as e:
