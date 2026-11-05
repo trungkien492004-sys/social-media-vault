@@ -54,6 +54,7 @@ class MediaItem(Base):
     caption = Column(Text, nullable=True)
     thumbnail_url = Column(String(500), nullable=True)
     file_url = Column(String(1000), nullable=True)  # Public URL in persistent storage (Supabase), if enabled
+    source_key = Column(String(1000), nullable=True, index=True)  # identity of the source media, used to skip re-downloads
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships

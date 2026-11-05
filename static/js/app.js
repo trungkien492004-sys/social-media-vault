@@ -1254,7 +1254,7 @@ async function confirmDuplicates(urls) {
         const known = new Set((await res.json()).map(h => h.url.replace(/\/+$/, "")));
         const dups = urls.filter(u => known.has(u.replace(/\/+$/, "")));
         if (!dups.length) return true;
-        return confirm(`${dups.length} link đã từng được tải trước đây:\n\n${dups.slice(0, 5).join("\n")}\n\nVẫn tải lại (sẽ tạo thêm kho mới)?`);
+        return confirm(`${dups.length} link đã từng được tải trước đây:\n\n${dups.slice(0, 5).join("\n")}\n\nVẫn tải lại? (Chỉ những mục chưa từng tải mới được lưu vào kho mới.)`);
     } catch (e) {
         return true;
     }

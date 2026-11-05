@@ -40,6 +40,9 @@ def init_db():
     if "file_url" not in cols:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE media_items ADD COLUMN file_url VARCHAR(1000)"))
+    if "source_key" not in cols:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE media_items ADD COLUMN source_key VARCHAR(1000)"))
     vault_cols = {c["name"] for c in insp.get_columns("vaults")}
     if "user_id" not in vault_cols:
         with engine.begin() as conn:

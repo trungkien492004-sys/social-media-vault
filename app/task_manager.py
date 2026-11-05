@@ -3,6 +3,7 @@ import asyncio
 import uuid
 import json
 import logging
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, AsyncGenerator, Optional
@@ -18,7 +19,8 @@ from app.extractor import (
     sanitize_folder_name,
     extract_media_items,
     extract_from_page_source,
-    download_file
+    download_file,
+    item_key
 )
 
 logger = logging.getLogger("task_manager")
@@ -190,7 +192,47 @@ class TaskManager:
                     max_items=max_items
                 )
 
+            # Skip media this user already downloaded in earlier vaults (re-running a link only fetches new items)
+            skipped_known = 0
+            if extracted_items and not url.startswith("source://"):
+                rows = (
+                    db.query(MediaItem.source_key, MediaItem.original_url)
+                    .join(Vault, Vault.id == MediaItem.vault_id)
+                    .filter(Vault.user_id == user_id, Vault.id != vault_id)
+                    .all()
+                )
+                known_keys = {k for k, _ in rows if k}
+                # Items saved before source_key existed: only match whole-video page URLs
+                known_pages = {(o or "").rstrip("/") for k, o in rows if not k and o}
+                fresh = []
+                seen_now = set()
+                for it in extracted_items:
+                    key = item_key(it)
+                    old_match = it.needs_ytdlp and it.file_type == "video" and (it.original_url or "").rstrip("/") in known_pages
+                    if key in known_keys or old_match or key in seen_now:
+                        skipped_known += 1
+                        continue
+                    seen_now.add(key)
+                    fresh.append(it)
+                extracted_items = fresh
+
             total_items = len(extracted_items)
+            if total_items == 0 and skipped_known > 0:
+                # Nothing new: drop the empty vault instead of leaving clutter
+                try:
+                    shutil.rmtree(vault_folder, ignore_errors=True)
+                    db.delete(vault)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                await self.broadcast_event(task_id, {
+                    "status": "completed",
+                    "progress": 100,
+                    "current": 0,
+                    "total": 0,
+                    "message": f"Không có mục mới: cả {skipped_known} mục của link này đã được tải trước đó."
+                })
+                return
             if total_items == 0:
                 if source_html:
                     err_msg = "Không tìm thấy video/ảnh trong mã nguồn đã dán. Hãy mở đúng bài viết hoặc video (đã đăng nhập, xem được bình thường) rồi sao chép lại TOÀN BỘ mã nguồn (Ctrl+U, Ctrl+A, Ctrl+C)."
@@ -293,7 +335,8 @@ class TaskManager:
                         original_url=result["original_url"],
                         caption=result["caption"],
                         thumbnail_url=result["thumbnail_url"],
-                        file_url=result["file_url"]
+                        file_url=result["file_url"],
+                        source_key=result.get("source_key")
                     )
                     db.add(media_db)
                     db.commit()

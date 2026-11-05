@@ -41,6 +41,13 @@ class ExtractedItem:
         self.headers = headers or {}
         self.cookies_path = cookies_path
 
+def item_key(item: "ExtractedItem") -> str:
+    """Stable identity of a media item (post URL + media path without volatile CDN query tokens)."""
+    from urllib.parse import urlsplit
+    parts = urlsplit(item.download_url or "")
+    return f"{(item.original_url or '').rstrip('/')}|{parts.netloc.split(':')[0] if item.needs_ytdlp else ''}{parts.path}"[:1000]
+
+
 def normalize_url(url: str) -> str:
     url = url.strip()
     if not url.startswith("http://") and not url.startswith("https://"):
@@ -617,7 +624,8 @@ async def download_file(
             "file_size": path.stat().st_size,
             "original_url": item.original_url,
             "caption": item.caption,
-            "thumbnail_url": item.thumbnail_url
+            "thumbnail_url": item.thumbnail_url,
+            "source_key": item_key(item),
         }
 
     # Split / HLS streams: let yt-dlp download (and merge) them
