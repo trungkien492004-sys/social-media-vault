@@ -210,10 +210,22 @@ class TaskManager:
             saved_videos = 0
             total_bytes = 0
 
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                for idx, item in enumerate(extracted_items, start=1):
-                    result = await download_file(client, item, vault_folder, idx)
-                    if result:
+            direct_gate = asyncio.Semaphore(6)   # plain HTTP downloads + uploads
+            ytdlp_gate = asyncio.Semaphore(2)    # yt-dlp (HLS / merged streams) is heavier
+            done_count = 0
+
+            async with httpx.AsyncClient(
+                timeout=60.0,
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10)
+            ) as client:
+
+                async def process(idx: int, item):
+                    nonlocal saved_items_count, saved_images, saved_videos, total_bytes, done_count
+                    gate = ytdlp_gate if item.needs_ytdlp else direct_gate
+                    async with gate:
+                        result = await download_file(client, item, vault_folder, idx)
+                        if not result:
+                            return None
                         # Persist to Supabase Storage (if configured) and free local disk
                         file_url = None
                         if storage.enabled():
@@ -225,48 +237,63 @@ class TaskManager:
                                 except Exception:
                                     pass
                         result["file_url"] = file_url
+                        return result
 
-                        saved_items_count += 1
-                        total_bytes += result["file_size"]
-                        if result["file_type"] == "image":
-                            saved_images += 1
-                        else:
-                            saved_videos += 1
-
-                        # Save to database
-                        media_db = MediaItem(
-                            vault_id=vault.id,
-                            file_type=result["file_type"],
-                            file_name=result["file_name"],
-                            file_path=result["file_path"],
-                            file_size=result["file_size"],
-                            original_url=result["original_url"],
-                            caption=result["caption"],
-                            thumbnail_url=result["thumbnail_url"],
-                            file_url=result["file_url"]
-                        )
-                        db.add(media_db)
-                        db.commit()
-                        db.refresh(media_db)
-
-                        progress = int(10 + (idx / total_items) * 85)
+                async def run_one(idx: int, item):
+                    nonlocal saved_items_count, saved_images, saved_videos, total_bytes, done_count
+                    result = await process(idx, item)
+                    done_count += 1
+                    if not result:
+                        logger.warning(f"Bỏ qua mục thứ {idx} do tải thất bại.")
                         await self.broadcast_event(task_id, {
                             "status": "downloading",
-                            "progress": progress,
-                            "current": idx,
+                            "progress": int(10 + (done_count / total_items) * 85),
+                            "current": done_count,
                             "total": total_items,
-                            "message": f"Đã tải {idx}/{total_items}: {result['file_name']}",
-                            "latest_item": {
-                                "id": media_db.id,
-                                "file_name": media_db.file_name,
-                                "file_path": media_db.file_path,
-                                "file_url": media_db.file_url,
-                                "file_type": media_db.file_type,
-                                "file_size": media_db.file_size
-                            }
+                            "message": f"Đã xử lý {done_count}/{total_items} (bỏ qua 1 mục lỗi)"
                         })
+                        return
+
+                    saved_items_count += 1
+                    total_bytes += result["file_size"]
+                    if result["file_type"] == "image":
+                        saved_images += 1
                     else:
-                        logger.warning(f"Bỏ qua mục thứ {idx} do tải thất bại.")
+                        saved_videos += 1
+
+                    # Save to database (no await between these calls, so the shared session stays consistent)
+                    media_db = MediaItem(
+                        vault_id=vault.id,
+                        file_type=result["file_type"],
+                        file_name=result["file_name"],
+                        file_path=result["file_path"],
+                        file_size=result["file_size"],
+                        original_url=result["original_url"],
+                        caption=result["caption"],
+                        thumbnail_url=result["thumbnail_url"],
+                        file_url=result["file_url"]
+                    )
+                    db.add(media_db)
+                    db.commit()
+                    db.refresh(media_db)
+
+                    await self.broadcast_event(task_id, {
+                        "status": "downloading",
+                        "progress": int(10 + (done_count / total_items) * 85),
+                        "current": done_count,
+                        "total": total_items,
+                        "message": f"Đã tải {done_count}/{total_items}: {result['file_name']}",
+                        "latest_item": {
+                            "id": media_db.id,
+                            "file_name": media_db.file_name,
+                            "file_path": media_db.file_path,
+                            "file_url": media_db.file_url,
+                            "file_type": media_db.file_type,
+                            "file_size": media_db.file_size
+                        }
+                    })
+
+                await asyncio.gather(*(run_one(i, it) for i, it in enumerate(extracted_items, start=1)))
 
             # 3. Finalize Vault in database
             vault.total_items = saved_items_count

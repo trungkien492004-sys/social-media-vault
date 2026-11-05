@@ -388,11 +388,16 @@ def extract_with_gallerydl(url: str, cookies_file: Optional[Path] = None, max_it
     cmd = [sys.executable, "-m", "gallery_dl", "-g", "--range", f"1-{max_items}"]
     if cookies_file and cookies_file.exists() and cookies_file.stat().st_size > 0:
         cmd += ["--cookies", str(cookies_file)]
+    has_cookies = bool(cookies_file and cookies_file.exists() and cookies_file.stat().st_size > 0)
+    if has_cookies and "instagram.com" in url.lower():
+        path_parts = [p for p in url.split("instagram.com/", 1)[-1].split("?")[0].split("/") if p]
+        if len(path_parts) == 1:  # profile link: also take reels and stories ("tin")
+            cmd += ["-o", "include=posts,reels,stories"]
     cmd.append(url)
 
     items: List[ExtractedItem] = []
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180, encoding="utf-8", errors="replace", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=240, encoding="utf-8", errors="replace", env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     except Exception as e:
         logger.error(f"gallery-dl error for {url}: {e}")
         return items
@@ -447,6 +452,12 @@ def download_with_ytdlp_sync(item: ExtractedItem, target_stem: Path) -> Optional
             return cand
     return None
 
+def is_video_url(url: str) -> bool:
+    """True for links that point to one video/reel rather than a post, album or profile."""
+    u = url.lower()
+    markers = ("/reel/", "/reels/", "/tv/", "/watch", "fb.watch", "/videos/", "/video/", "/share/v/", "/share/r/")
+    return any(m in u for m in markers)
+
 async def extract_media_items(
     url: str,
     platform: str,
@@ -467,21 +478,22 @@ async def extract_media_items(
     elif platform == "zalo":
         items = await extract_zalo_media(url)
 
-    # 3. Other platforms (Instagram, Threads, Facebook) or fallback
+    # 3. Meta platforms (Instagram, Threads, Facebook) and anything else.
+    #    Single videos/reels: yt-dlp first (merges audio+video). Posts, albums, carousels, photos and
+    #    profiles: gallery-dl first because it returns EVERY image/video of the post.
     if not items:
         loop = asyncio.get_event_loop()
-        items = await loop.run_in_executor(
-            None,
-            extract_with_ytdlp,
-            url,
-            cookies_path,
-            max_items
-        )
-
-    # 3b. gallery-dl fallback (Facebook photos/albums/profiles, Instagram/Threads profiles & posts)
-    if not items and platform in ("facebook", "instagram", "threads", "other"):
-        loop = asyncio.get_event_loop()
-        items = await loop.run_in_executor(None, extract_with_gallerydl, url, cookies_path, max_items)
+        video_first = is_video_url(url)
+        order = ["ytdlp", "gallerydl"] if video_first else ["gallerydl", "ytdlp"]
+        if platform not in ("facebook", "instagram", "threads"):
+            order = ["ytdlp", "gallerydl"]
+        for engine in order:
+            if engine == "ytdlp":
+                items = await loop.run_in_executor(None, extract_with_ytdlp, url, cookies_path, max_items)
+            else:
+                items = await loop.run_in_executor(None, extract_with_gallerydl, url, cookies_path, max_items)
+            if items:
+                break
 
     # 4. Filter by user preference: "all", "image", "video"
     if media_filter == "image":
@@ -528,7 +540,7 @@ async def download_file(
     headers.update({k: v for k, v in item.headers.items() if k.lower() != "accept-encoding"})
 
     try:
-        await asyncio.sleep(random.uniform(0.2, 0.5))
+        await asyncio.sleep(random.uniform(0.05, 0.2))
 
         async with client.stream("GET", item.download_url, headers=headers, follow_redirects=True, timeout=60.0) as resp:
             if resp.status_code == 200:
